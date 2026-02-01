@@ -1,0 +1,80 @@
+## Axolotl SFT config for Qwen/Qwen2.5-1.5B-Instruct
+## Trains on the Capybara-style conversations in ./sft_paragraph_span_train.jsonl
+
+base_model: Qwen/Qwen3-1.7B-Base
+
+# Dataset configuration: chat messages in OpenAI-like format
+datasets:
+  - path: ./data/CORAL/CORAL_1k_conv_train.jsonl
+    type: chat_template
+
+    # step 1: template selection
+    chat_template: tokenizer_default_fallback_chatml
+
+    # step 2: dataset field mappings
+    field_messages: conversations
+    message_property_mappings:
+      role: role
+      content: content
+
+    # Role normalization (map custom roles to those used by the template)
+    roles:
+      assistant:
+        - assistant
+        - gpt
+        - model
+      user:
+        - user
+        - human
+      system:
+        - system
+
+    # step 3: masking (train only on assistant turns)
+    roles_to_train: ["assistant"]
+    train_on_eos: "turn"
+
+# Streaming can reduce RAM when reading large local JSONL
+streaming: true
+streaming_multipack_buffer_size: 10000
+shuffle_merged_datasets: true
+
+# Training configuration (mirrors sft_conversation_train.sh)
+output_dir: ./checkpoints/Qwen3-1.7B-Base-v1
+sequence_len: 2048
+sample_packing: false
+flash_attention: true
+gradient_accumulation_steps: 128
+micro_batch_size: 2
+num_epochs: 100
+
+# Optimizer and scheduler
+optimizer: adamw_torch
+lr_scheduler: cosine
+learning_rate: 5.0e-5
+warmup_ratio: 0.1
+weight_decay: 0.0
+
+# Precision and performance
+bf16: true
+tf32: false
+gradient_checkpointing: true
+
+# Logging and checkpointing
+logging_steps: 10
+save_strategy: steps
+save_steps: 100
+save_total_limit: 5
+
+# Special tokens: ChatML ends turns with <|im_end|>
+special_tokens:
+  eos_token: "<|im_end|>"
+
+# Optional: set a validation split size (we already have a separate valid file for analysis)
+val_set_size: 0.01
+
+# Weights & Biases (optional)
+wandb_project: GT_CORAL
+wandb_entity: theblackcat102
+wandb_watch:
+wandb_name:
+wandb_log_model:
