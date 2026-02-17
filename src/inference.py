@@ -14,7 +14,7 @@ from transformers import (
     LogitsProcessorList,
 )
 
-from .decoder_inference_utils import (
+from .inference_utils import (
     TrieNode,
     build_semantic_docid_trie,
     TrieConstrainedLogitsProcessor,
@@ -63,8 +63,6 @@ class DecoderInference:
         self.base_model_path = base_model_path
         self.train_data_path = train_data_path
         self.device = self._setup_device(device)
-        self.use_lora = use_lora
-        self.constraint_type = constraint_type
 
         logger.info("Initializing Decoder Inference...")
         logger.info(f"Loading model from: {self.model_path}")
@@ -95,16 +93,14 @@ class DecoderInference:
             )
             logger.info(f"Loaded tokenizer from {self.model_path}")
 
-            if any(
-                token.startswith("<|d") for token in tokenizer.get_vocab().keys()
-            ):
+            if any(token.startswith("<|d") for token in tokenizer.get_vocab().keys()):
                 logger.info("Detected semantic docid tokens in vocabulary")
                 logger.info(f"Vocabulary size: {len(tokenizer)}")
 
         except Exception as e:
             logger.warning(f"Loading tokenizer from base Qwen model due to: {e}")
             tokenizer = AutoTokenizer.from_pretrained(
-                "Qwen/Qwen3-0.6B", padding_side="left", trust_remote_code=True
+                "Qwen/Qwen3-1.7B", padding_side="left", trust_remote_code=True
             )
 
         if tokenizer.pad_token is None:
@@ -183,7 +179,7 @@ class DecoderInference:
         else:
             cleaned_response = [self._clean_docid(resp) for resp in response]
 
-        return clean_response
+        return cleaned_response
 
     def _clean_docid(self, docid: str) -> str:
         """
@@ -249,6 +245,7 @@ class DecoderInference:
         predictions = []
 
         pbar = tqdm(test_data, desc="Evaluating")
+
         for idx, item in enumerate(pbar, 1):
             if item.get("conversations") is None:
                 text = item["text"]
@@ -338,7 +335,6 @@ def get_args() -> Namespace:
     parser.add_argument(
         "--test_file",
         type=str,
-        default="data/CORAL/CORAL_1k_test.json",
         help="Path to test file for batch inference",
     )
     parser.add_argument(
@@ -397,7 +393,7 @@ def main():
             print(metrics)
 
     else:
-        logger.error("Please specify either --input, --batch_inference, or --evaluate")
+        logger.error("Please specify either --input or --evaluate")
         return 1
 
     return 0

@@ -1,4 +1,7 @@
 notebooks/
+checkpoints/
+wandb/
+last_run_prepared/
 .python-version
 .venv
 *__pycache__/

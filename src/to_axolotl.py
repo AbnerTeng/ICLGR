@@ -1,3 +1,4 @@
+import json
 from argparse import ArgumentParser, Namespace
 
 from datasets import load_from_disk
@@ -16,29 +17,15 @@ def get_args() -> Namespace:
 
 
 def convert_to_axolotl_format(dataset, output_path):
-    conversations = []
-
-    for sample in dataset:
-        if sample["operation"] == "query":
-            conv = {
-                "conversations": [
-                    {"role": "user", "content": sample["text"]},
-                    {"role": "assistant", "content": sample["doc_id"]},
-                ]
-            }
-        else:
-            conv = {
-                "conversations": [
-                    {"role": "user", "content": sample["text"]},
-                    {"role": "assistant", "content": sample["doc_id"]},
-                ]
-            }
-
-        conversations.append(conv)
-
     with open(output_path, "w") as f:
-        for conv in conversations:
-            f.write(f"{conv}\n")
+        for sample in dataset:
+            conv = {
+                "conversations": [
+                    {"role": "user", "content": sample["text"]},
+                    {"role": "assistant", "content": sample["doc_id"]},
+                ]
+            }
+            f.write(json.dumps(conv) + "\n")
 
 
 if __name__ == "__main__":
