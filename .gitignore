@@ -33,3 +33,4 @@ build/
 *.manifest
 *.spec
 data/
+archive/

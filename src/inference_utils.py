@@ -25,8 +25,12 @@ class EmbeddingSearch:
             data = [json.loads(line) for line in f]
 
         for item in data:
-            if item["operation"] == "indexing":
-                catalog.append(item["doc_id"])
+            if "operation" in item.keys():
+                if item["operation"] == "indexing":
+                    catalog.append(item["doc_id"])
+            else:
+                if item["text"].split(":")[0] == "document":
+                    catalog.append(item["doc_id"])
 
         return catalog
 
@@ -71,59 +75,59 @@ class EmbeddingSearch:
         return results
 
 
-class BM25Retriever:
-    def __init__(self, train_data_path: str) -> None:
-        self.train_data_path = train_data_path
-        self.catalog = self._get_all_product_ids()
-        self.tokenized_corpus = [self.tokenize(title) for title in self.catalog]
-        self.bm25 = BM25Okapi(self.tokenized_corpus)
-
-    def _get_all_product_ids(self) -> List[str]:
-        catalog: List[str] = []
-
-        with open(self.train_data_path, "r") as f:
-            data = [json.loads(line) for line in f]
-
-        for item in data:
-            if item["operation"] == "indexing":
-                catalog.append(item["doc_id"])
-
-        return catalog
-
-    def tokenize(self, text: str) -> List[str]:
-        return text.lower().split()
-
-    def retrieve(self, generated_beams: List[str], top_k: int = 5) -> List[tuple]:
-        candidate_map = {}
-
-        for _, beam_text in enumerate(generated_beams):
-            tokenized_query = self.tokenize(beam_text)
-            doc_scores = self.bm25.get_scores(tokenized_query)
-            weight = 1.0
-            top_n_indices = np.argpartition(doc_scores, -5)[-5:]
-
-            for idx in top_n_indices:
-                score = doc_scores[idx]
-
-                if score <= 0:
-                    continue
-
-                if idx not in candidate_map:
-                    candidate_map[idx] = score * weight
-                else:
-                    candidate_map[idx] = max(candidate_map[idx], score * weight)
-
-        sorted_candidates = sorted(
-            candidate_map.items(), key=lambda item: item[1], reverse=True
-        )
-
-        results = []
-
-        for idx, score in sorted_candidates[:top_k]:
-            results.append((self.catalog[idx], score))
-
-        return results
-
+# class BM25Retriever:
+#     def __init__(self, train_data_path: str) -> None:
+#         self.train_data_path = train_data_path
+#         self.catalog = self._get_all_product_ids()
+#         self.tokenized_corpus = [self.tokenize(title) for title in self.catalog]
+#         self.bm25 = BM25Okapi(self.tokenized_corpus)
+#
+#     def _get_all_product_ids(self) -> List[str]:
+#         catalog: List[str] = []
+#
+#         with open(self.train_data_path, "r") as f:
+#             data = [json.loads(line) for line in f]
+#
+#         for item in data:
+#             if item["operation"] == "indexing":
+#                 catalog.append(item["doc_id"])
+#
+#         return catalog
+#
+#     def tokenize(self, text: str) -> List[str]:
+#         return text.lower().split()
+#
+#     def retrieve(self, generated_beams: List[str], top_k: int = 5) -> List[tuple]:
+#         candidate_map = {}
+#
+#         for _, beam_text in enumerate(generated_beams):
+#             tokenized_query = self.tokenize(beam_text)
+#             doc_scores = self.bm25.get_scores(tokenized_query)
+#             weight = 1.0
+#             top_n_indices = np.argpartition(doc_scores, -5)[-5:]
+#
+#             for idx in top_n_indices:
+#                 score = doc_scores[idx]
+#
+#                 if score <= 0:
+#                     continue
+#
+#                 if idx not in candidate_map:
+#                     candidate_map[idx] = score * weight
+#                 else:
+#                     candidate_map[idx] = max(candidate_map[idx], score * weight)
+#
+#         sorted_candidates = sorted(
+#             candidate_map.items(), key=lambda item: item[1], reverse=True
+#         )
+#
+#         results = []
+#
+#         for idx, score in sorted_candidates[:top_k]:
+#             results.append((self.catalog[idx], score))
+#
+#         return results
+#
 
 class TrieNode:
     def __init__(self) -> None:
@@ -139,9 +143,15 @@ def build_semantic_docid_trie(train_data_path: str, tokenizer) -> TrieNode:
         for line in f:
             item = json.loads(line)
 
-            if item["operation"] == "indexing":
-                docid = item["doc_id"]
-                docids.append(docid)
+            if "operation" in item.keys():
+                if item["operation"] == "indexing":
+                    docid = item["doc_id"]
+                    docids.append(docid)
+            else:
+                if item["text"].split(":")[0] == "document":
+                    docid = item["doc_id"]
+                    docids.append(docid)
+
 
     for doc_id_str in docids:
         token_ids = tokenizer.encode(doc_id_str, add_special_tokens=False)
