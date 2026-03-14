@@ -239,71 +239,91 @@ class DecoderInference:
 
         logger.info(f"Evaluating on {len(test_data)} samples...")
 
-        hit_at_1 = 0
-        hit_at_10 = 0
-        total = len(test_data)
-        predictions = []
+        hit_at_1: float = 0.0
+        hit_at_10: float = 0.0
+        recall_at_10: float = 0.0
+        mrr_at_10: float = 0.0
+        total: int = len(test_data)
+        predictions: list = []
 
-        pbar = tqdm(test_data, desc="Evaluating")
+        with tqdm(total=total, desc="Evaluating", unit="sample") as pbar:
+            for idx, item in enumerate(test_data):
+                if item.get("conversations") is None:
+                    text = item["text"]
+                    true_docid = item["doc_id"]
+                else:
+                    text = item["conversations"][0]["content"]
+                    true_docid = item["conversations"][1]["content"]
 
-        for idx, item in enumerate(pbar, 1):
-            if item.get("conversations") is None:
-                text = item["text"]
-                true_docid = item["doc_id"]
-            else:
-                text = item["conversations"][0]["content"]
-                true_docid = item["conversations"][1]["content"]
+                predicted_docids = self.generate_docid("question: " + text)
+                logger.info(
+                    f"Predicted_docids: {predicted_docids}, True_docid: {true_docid}"
+                )
 
-            predicted_docids = self.generate_docid("question: " + text)
-            print(f"Predicted_docids: {predicted_docids}, True_docid: {true_docid}")
+                true_docid_normalized = str(true_docid).strip()
 
-            true_docid_normalized = str(true_docid).strip()
+                if isinstance(predicted_docids, list):
+                    predicted_docids_normalized = [
+                        str(p).strip() for p in predicted_docids
+                    ]
+                else:
+                    predicted_docids_normalized = [str(predicted_docids).strip()]
 
-            if isinstance(predicted_docids, list):
-                predicted_docids_normalized = [str(p).strip() for p in predicted_docids]
-            else:
-                predicted_docids_normalized = [str(predicted_docids).strip()]
+                rank = (
+                    predicted_docids_normalized.index(true_docid_normalized) + 1
+                    if true_docid_normalized in predicted_docids_normalized
+                    else float("inf")
+                )
+                hit_at_1 += 1.0 if rank <= 1 else 0.0
+                hit_at_10 += 1.0 if rank <= 10 else 0.0
+                recall_at_10 += 1.0 if rank <= 10 else 0.0
+                mrr_at_10 += 1.0 / rank if rank <= 10 else 0.0
 
-            is_hit_1 = true_docid_normalized == predicted_docids_normalized[0]
+                current_hit_1 = hit_at_1 / idx
+                current_hit_10 = hit_at_10 / idx
+                current_recall_at_10 = recall_at_10 / idx
+                current_mrr_at_10 = mrr_at_10 / idx
 
-            if is_hit_1:
-                hit_at_1 += 1
+                pbar.set_postfix(
+                    {
+                        "Hit@1": f"{current_hit_1:.4f}",
+                        "Hit@10": f"{current_hit_10:.4f}",
+                        "Recall@10": f"{current_recall_at_10:.4f}",
+                        "MRR@10": f"{current_mrr_at_10:.4f}",
+                    }
+                )
+                pbar.update(1)
 
-            is_hit_10 = true_docid_normalized in predicted_docids_normalized
-
-            if is_hit_10:
-                hit_at_10 += 1
-
-            current_hit_1 = hit_at_1 / idx
-            current_hit_10 = hit_at_10 / idx
-            pbar.set_postfix(
-                {"Hit@1": f"{current_hit_1:.4f}", "Hit@10": f"{current_hit_10:.4f}"}
-            )
-
-            predictions.append(
-                {
-                    "text": text,
-                    "true_docid": true_docid,
-                    "predicted_docid": predicted_docids,
-                    "hit_at_1": is_hit_1,
-                    "hit_at_10": is_hit_10,
-                }
-            )
+                predictions.append(
+                    {
+                        "text": text,
+                        "true_docid": true_docid,
+                        "predicted_docid": predicted_docids,
+                        "hit_at_1": rank <= 1,
+                        "hit_at_10": rank <= 10,
+                        "recall_at_10": rank <= 10,
+                        "mrr_at_10": 1.0 / rank if rank <= 10 else 0.0,
+                    }
+                )
 
         hit_at_1_score = hit_at_1 / total
         hit_at_10_score = hit_at_10 / total
+        recall_at_10_score = recall_at_10 / total
+        mrr_at_10_score = mrr_at_10 / total
 
         results = {
             "hit_at_1": hit_at_1_score,
             "hit_at_10": hit_at_10_score,
-            "hit_at_1_count": hit_at_1,
-            "hit_at_10_count": hit_at_10,
+            "recall_at_10": recall_at_10_score,
+            "mrr_at_10": mrr_at_10_score,
             "total": total,
             "predictions": predictions,
         }
 
         logger.info(f"Hit@1: {hit_at_1_score:.4f} ({hit_at_1}/{total})")
         logger.info(f"Hit@10: {hit_at_10_score:.4f} ({hit_at_10}/{total})")
+        logger.info(f"Recall@10: {recall_at_10_score:.4f} ({recall_at_10}/{total})")
+        logger.info(f"MRR@10: {mrr_at_10_score:.4f} ({mrr_at_10}/{total})")
 
         return results
 
@@ -373,6 +393,7 @@ def main():
             if args.output_file:
                 with open(args.output_file, "w") as f:
                     json.dump(results, f, indent=2)
+
                 logger.info(f"Evaluation results saved to: {args.output_file}")
             else:
                 logger.info(
@@ -380,6 +401,12 @@ def main():
                 )
                 logger.info(
                     f"Hit@10: {results['hit_at_10']:.4f} ({results['hit_at_10_count']}/{results['total']})"
+                )
+                logger.info(
+                    f"Recall@10: {results['recall_at_10']:.4f} ({results['recall_at_10_count']}/{results['total']})"
+                )
+                logger.info(
+                    f"MRR@10: {results['mrr_at_10']:.4f} ({results['mrr_at_10_count']}/{results['total']})"
                 )
         else:
             with open(args.output_file, "r") as f:
