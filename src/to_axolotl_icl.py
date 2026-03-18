@@ -55,10 +55,10 @@ def generate_icl_variants(target_query, all_docs, all_queries, n):
         "Doc-Positive Front": [pos_doc] + neg_docs[:n-1],
         "Doc-Positive Back": neg_docs[:n-1] + [pos_doc],
         "All-Noise Docs": neg_docs[:n],
-        "Doc-Positive + Query Front": [pos_doc] + neg_docs[:n-1] + neg_queries[:n],
-        "Doc-Positive + Query Back": neg_docs[:n] + neg_queries[:n-1] + [pos_doc],
-        "All-Noise Docs + Query": neg_docs[:n] + neg_queries[:n],
-        "Query Only (Noise)": neg_queries[:n]
+        # "Doc-Positive + Query Front": [pos_doc] + neg_docs[:n-1] + neg_queries[:n],
+        # "Doc-Positive + Query Back": neg_docs[:n] + neg_queries[:n-1] + [pos_doc],
+        # "All-Noise Docs + Query": neg_docs[:n] + neg_queries[:n],
+        # "Query Only (Noise)": neg_queries[:n]
     }
 
     for name, samples in patterns.items():
