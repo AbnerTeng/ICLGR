@@ -34,3 +34,8 @@ build/
 *.spec
 data/
 archive/
+env.sh
+eval.sh
+models/
+data/
+do_smt.ipynb
