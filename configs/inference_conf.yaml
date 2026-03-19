@@ -1,0 +1,7 @@
+model_path: "~/git/ICLGR/checkpoints/Qwen3-1.7B-Base-msmarco-100k-10epochs/"
+from_hf: false
+base_model_path:
+train_file: "~/git/ICLGR/data/msmarco/train.jsonl"
+test_file: "~/git/ICLGR/data/msmarco/test.jsonl"
+max_samples: -1
+output_file: "~/git/ICLGR/retrieve_results/output_file.json"

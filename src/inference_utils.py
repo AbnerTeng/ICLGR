@@ -131,9 +131,9 @@ class TrieNode:
         self.end_of_docid: bool = False
 
 
-def build_semantic_docid_trie(data_paths, tokenizer) -> TrieNode:
+def build_semantic_docid_trie(data_paths: List[str], tokenizer) -> TrieNode:
     root = TrieNode()
-    
+
     if isinstance(data_paths, str):
         data_paths = [data_paths]
 
@@ -144,10 +144,9 @@ def build_semantic_docid_trie(data_paths, tokenizer) -> TrieNode:
             for line in f:
                 item = json.loads(line)
 
-                # indexing dataset
                 if item.get("operation") == "indexing":
                     docids.append(item["doc_id"])
-                    
+
     for doc_id_str in docids:
         token_ids = tokenizer.encode(doc_id_str, add_special_tokens=False)
         node = root
@@ -155,6 +154,7 @@ def build_semantic_docid_trie(data_paths, tokenizer) -> TrieNode:
         for token_id in token_ids:
             if token_id not in node.children:
                 node.children[token_id] = TrieNode()
+
             node = node.children[token_id]
         node.end_of_docid = True
 

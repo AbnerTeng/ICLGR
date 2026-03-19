@@ -1,0 +1,4 @@
+input_path: "./data/msmarco-ICL-100k/"
+dataset_name: "msmarco"
+n_shot: 3
+output_dir: "./data/msmarco"

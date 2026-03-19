@@ -52,7 +52,7 @@ class DecoderInference:
         model_path: str,
         from_hf: bool,
         train_data_path: str,
-        device: str = "auto",
+        device: str = "cuda",
         base_model_path: Optional[str] = None,
     ) -> None:
         if from_hf:
@@ -66,7 +66,6 @@ class DecoderInference:
 
         logger.info("Initializing Decoder Inference...")
         logger.info(f"Loading model from: {self.model_path}")
-        logger.info(f"Using device: {self.device}")
 
         self.tokenizer = self._load_tokenizer()
         self.model = self._load_model()
@@ -77,13 +76,7 @@ class DecoderInference:
 
     def _setup_device(self, device: str) -> torch.device:
         """Setup the computation device."""
-        if device == "auto":
-            if torch.cuda.is_available():
-                return torch.device("cuda")
-            else:
-                return torch.device("cpu")
-
-        return torch.device(device)
+        return torch.device("cuda")
 
     def _load_tokenizer(self) -> AutoTokenizer:
         """Load the tokenizer with special semantic tokens if present."""
@@ -347,7 +340,6 @@ def get_args() -> Namespace:
         type=str,
         help="Path to the base model checkpoint (for LoRA models)",
     )
-    parser.add_argument("--input", type=str, help="Input text for single inference")
     parser.add_argument(
         "--train_file",
         type=str,
@@ -358,11 +350,6 @@ def get_args() -> Namespace:
         help="Path to test file for batch inference",
     )
     parser.add_argument(
-        "--evaluate",
-        action="store_true",
-        help="Evaluate model on test set and compute accuracy",
-    )
-    parser.add_argument(
         "--max_samples", type=int, help="Maximum number of samples for evaluation"
     )
     parser.add_argument("--output_file", type=str, help="Output file to save results")
@@ -371,7 +358,7 @@ def get_args() -> Namespace:
 
 
 def main():
-    device = "auto"
+    device = "cuda"
     args = get_args()
     inference = DecoderInference(
         args.model_path,
@@ -381,47 +368,37 @@ def main():
         args.base_model_path,
     )
 
-    if args.input:
-        logger.info(f"Input text: {args.input}")
-        docid = inference.generate_docid(args.input)
-        logger.info(f"Generated DocID: {docid}")
+    if not os.path.exists(args.output_file):
+        results = inference.evaluate_on_test_set(args.test_file, args.max_samples)
 
-    elif args.evaluate:
-        if not os.path.exists(args.output_file):
-            results = inference.evaluate_on_test_set(args.test_file, args.max_samples)
+        if args.output_file:
+            with open(args.output_file, "w") as f:
+                json.dump(results, f, indent=2)
 
-            if args.output_file:
-                with open(args.output_file, "w") as f:
-                    json.dump(results, f, indent=2)
-
-                logger.info(f"Evaluation results saved to: {args.output_file}")
-            else:
-                logger.info(
-                    f"Hit@1: {results['hit_at_1']:.4f} ({results['hit_at_1_count']}/{results['total']})"
-                )
-                logger.info(
-                    f"Hit@10: {results['hit_at_10']:.4f} ({results['hit_at_10_count']}/{results['total']})"
-                )
-                logger.info(
-                    f"Recall@10: {results['recall_at_10']:.4f} ({results['recall_at_10_count']}/{results['total']})"
-                )
-                logger.info(
-                    f"MRR@10: {results['mrr_at_10']:.4f} ({results['mrr_at_10_count']}/{results['total']})"
-                )
+            logger.info(f"Evaluation results saved to: {args.output_file}")
         else:
-            with open(args.output_file, "r") as f:
-                results = json.load(f)["predictions"]
-
-            model_outputs = [res["predicted_docid"] for res in results]
-            goldens = [res["true_docid"] for res in results]
-            metrics_calculator = GRMetrics(model_outputs, goldens)
-            metrics = metrics_calculator.calculate_metrics(k=[1, 10])
-
-            print(metrics)
-
+            logger.info(
+                f"Hit@1: {results['hit_at_1']:.4f} ({results['hit_at_1_count']}/{results['total']})"
+            )
+            logger.info(
+                f"Hit@10: {results['hit_at_10']:.4f} ({results['hit_at_10_count']}/{results['total']})"
+            )
+            logger.info(
+                f"Recall@10: {results['recall_at_10']:.4f} ({results['recall_at_10_count']}/{results['total']})"
+            )
+            logger.info(
+                f"MRR@10: {results['mrr_at_10']:.4f} ({results['mrr_at_10_count']}/{results['total']})"
+            )
     else:
-        logger.error("Please specify either --input or --evaluate")
-        return 1
+        with open(args.output_file, "r") as f:
+            results = json.load(f)["predictions"]
+
+        model_outputs = [res["predicted_docid"] for res in results]
+        goldens = [res["true_docid"] for res in results]
+        metrics_calculator = GRMetrics(model_outputs, goldens)
+        metrics = metrics_calculator.calculate_metrics(k=[1, 10])
+
+        print(metrics)
 
     return 0
 
