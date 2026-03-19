@@ -11,10 +11,11 @@ def get_args() -> Namespace:
     parser.add_argument(
         "--input_path",
         type=str,
-        default="/semantic-search-pvc/users/lala/ICLGR_project/data/msmarco-ICL-100k/data",
+        default="../data/msmarco-ICL-100k/",
     )
     parser.add_argument("--dataset_name", type=str, default="msmarco")
-    parser.add_argument("--n_shot", type=int, default=0, help="Number of examples in context")
+    parser.add_argument("--n_shot", type=int, default=3, help="Number of examples in context")
+    parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
 
 def format_item(sample):
@@ -23,7 +24,7 @@ def format_item(sample):
 
 def generate_icl_variants(target_query, all_docs, all_queries, n):
     """
-    Generates 7 different ICL patterns for a specific target query.
+    Generates different ICL patterns for a specific target query.
     """
     # Zero-shot
     if n == 0:
@@ -78,6 +79,28 @@ def generate_icl_variants(target_query, all_docs, all_queries, n):
     
     return variants
 
+def subsample_by_pattern(examples, ratio_map=None, keep_all_patterns=None):
+    ratio_map = ratio_map or {}
+    keep_all_patterns = keep_all_patterns or set()
+
+    grouped = {}
+    for ex in examples:
+        pattern = ex["metadata"]["pattern"]
+        grouped.setdefault(pattern, []).append(ex)
+
+    final_examples = []
+    for pattern, items in grouped.items():
+        if pattern in keep_all_patterns:
+            final_examples.extend(items)
+        elif pattern in ratio_map:
+            keep_n = max(1, int(len(items) * ratio_map[pattern])) if len(items) > 0 else 0
+            final_examples.extend(random.sample(items, keep_n))
+        else:
+            final_examples.extend(items)
+
+    random.shuffle(final_examples)
+    return final_examples
+
 def process_and_save(train_docs, train_queries, dataset, output_path, n_shot):
     """Splits dataset by operation and applies n-shot conversion."""
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
@@ -87,12 +110,34 @@ def process_and_save(train_docs, train_queries, dataset, output_path, n_shot):
     queries = [s for s in dataset if s["operation"] == "query"]
     
     print(f"Processing and saving to: {output_path}")
+
+    nshot_examples = []
+    for q in tqdm(queries, desc=f"Generating {n_shot}-shot"):
+        variants = generate_icl_variants(q, train_docs, train_queries, n_shot)
+        nshot_examples.extend(variants)
+    nshot_examples = subsample_by_pattern(
+        nshot_examples,
+        ratio_map={
+            "Doc-Positive Front": 0.2,
+            "Doc-Positive Back": 0.2,
+        },
+        keep_all_patterns={"All-Noise Docs"}
+    )
+    zero_shot_examples = []
+    for q in tqdm(queries, desc="Generating zero-shot"):
+        zero_shot_examples.extend(generate_icl_variants(q, train_docs, train_queries, 0))
+
+    all_examples = nshot_examples + zero_shot_examples
+    random.shuffle(all_examples)
+
+    
     with open(output_path, "w", encoding="utf-8") as f:
-        # Iterate through queries to create ICL training samples
-        for q in tqdm(queries):
-            variants = generate_icl_variants(q, train_docs, train_queries, n_shot)
-            for v in variants:
-                f.write(json.dumps(v, ensure_ascii=False) + "\n")
+        for ex in all_examples:
+            f.write(json.dumps(ex, ensure_ascii=False) + "\n")
+    
+    print(f"Saved {len(all_examples)} examples.")
+    print(f"  - n-shot kept: {len(nshot_examples)}")
+    print(f"  - zero-shot added: {len(zero_shot_examples)}")
 
 if __name__ == "__main__":
     args = get_args()
@@ -122,7 +167,7 @@ if __name__ == "__main__":
             docs_pool = [s for s in dataset["icl_test"] if s["operation"] == "indexing"]
             queries_pool = [s for s in dataset["icl_test"] if s["operation"] == "query"]
 
-        out_file = f"/semantic-search-pvc/users/lala/ICLGR_project/data/{args.dataset_name}_axolotl/{split}_{args.n_shot}shot.jsonl"
+        out_file = f"../data/{args.dataset_name}_axolotl/{split}_{args.n_shot}shot.jsonl"
         process_and_save(
             docs_pool,
             queries_pool,
@@ -131,4 +176,4 @@ if __name__ == "__main__":
             args.n_shot
         )
 
-    print("\n✅ Conversion complete for all 7 ICL patterns.")
+    print("\n✅ Conversion complete for all ICL patterns.")
