@@ -1,7 +1,10 @@
 notebooks/
 checkpoints/
 wandb/
+retrieve_results/
 last_run_prepared/
+outputs/
+checkpoint
 .python-version
 .venv
 *__pycache__/

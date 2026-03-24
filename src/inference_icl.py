@@ -1,9 +1,11 @@
 import os
 import json
 import logging
-from argparse import ArgumentParser, Namespace
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+import hydra
+from omegaconf import DictConfig
 
 import torch
 from tqdm import tqdm
@@ -14,12 +16,12 @@ from transformers import (
     LogitsProcessorList,
 )
 
-from inference_utils import (
+from .inference_utils import (
     TrieNode,
     build_semantic_docid_trie,
     TrieConstrainedLogitsProcessor,
 )
-from metrics import GRMetrics
+from .metrics import GRMetrics
 
 
 os.environ.setdefault("NCCL_P2P_DISABLE", "1")
@@ -53,7 +55,6 @@ class DecoderInference:
         from_hf: bool,
         train_data_path: str,
         new_data_path: str,
-        device: str = "cuda",
         base_model_path: Optional[str] = None,
     ) -> None:
         if from_hf:
@@ -64,7 +65,7 @@ class DecoderInference:
         self.base_model_path = base_model_path
         self.train_data_path = train_data_path
         self.new_data_path = new_data_path
-        self.device = self._setup_device(device)
+        self.device = self._setup_device()
 
         logger.info("Initializing Decoder Inference...")
         logger.info(f"Loading model from: {self.model_path}")
@@ -77,7 +78,7 @@ class DecoderInference:
 
         logger.info("Model loaded successfully!")
 
-    def _setup_device(self, device: str) -> torch.device:
+    def _setup_device(self) -> torch.device:
         """Setup the computation device."""
         return torch.device("cuda")
 
@@ -311,66 +312,31 @@ class DecoderInference:
         return results
 
 
-def get_args() -> Namespace:
-    parser = ArgumentParser()
-    parser.add_argument(
-        "--model_path",
-        type=str,
-        required=True,
-        help="Path to the trained model checkpoint",
-    )
-    parser.add_argument(
-        "--from_hf",
-        type=bool,
-        required=True,
-        default=False,
-    )
-    parser.add_argument(
-        "--base_model_path",
-        type=str,
-        help="Path to the base model checkpoint (for LoRA models)",
-    )
-    parser.add_argument(
-        "--train_file",
-        type=str,
-    )
-    parser.add_argument(
-        "--new_file",
-        type=str,
-        default=""
-    )
-    parser.add_argument(
-        "--test_file",
-        type=str,
-        help="Path to test file for batch inference",
-    )
-    parser.add_argument(
-        "--max_samples", type=int, help="Maximum number of samples for evaluation"
-    )
-    parser.add_argument("--output_file", type=str, help="Output file to save results")
+@hydra.main(config_path="../configs", config_name="inference_conf", version_base=None)
+def main(cfg: DictConfig) -> int:
+    max_samples = cfg.max_samples if cfg.max_samples > 0 else None
+    output_file = os.path.expanduser(cfg.output_file)
 
-    return parser.parse_args()
-
-
-def main():
-    device = "cuda"
-    args = get_args()
     inference = DecoderInference(
-        args.model_path,
-        args.from_hf,
-        args.train_file,
-        args.new_file,
-        device,
-        args.base_model_path,
+        model_path=os.path.expanduser(cfg.model_path),
+        from_hf=cfg.from_hf,
+        train_data_path=os.path.expanduser(cfg.train_file),
+        new_data_path=os.path.expanduser(cfg.new_file) if cfg.new_file else "",
+        base_model_path=(
+            os.path.expanduser(cfg.base_model_path) if cfg.base_model_path else None
+        ),
     )
 
-    if not os.path.exists(args.output_file):
-        results = inference.evaluate_on_test_set(args.test_file, args.max_samples)
+    if not os.path.exists(output_file):
+        results = inference.evaluate_on_test_set(
+            os.path.expanduser(cfg.test_file), max_samples
+        )
 
-        if args.output_file:
-            with open(args.output_file, "w") as f:
+        if output_file:
+            os.makedirs(os.path.dirname(output_file), exist_ok=True)
+            with open(output_file, "w") as f:
                 json.dump(results, f, indent=2)
-            logger.info(f"Evaluation results saved to: {args.output_file}")
+            logger.info(f"Evaluation results saved to: {output_file}")
         else:
             logger.info(
                 f"Hit@1: {results['hit_at_1']:.4f} ({results['hit_at_1_count']}/{results['total']})"
@@ -379,7 +345,7 @@ def main():
                 f"Hit@10: {results['hit_at_10']:.4f} ({results['hit_at_10_count']}/{results['total']})"
             )
     else:
-        with open(args.output_file, "r") as f:
+        with open(output_file, "r") as f:
             results = json.load(f)["predictions"]
 
         model_outputs = [res["predicted_docid"] for res in results]
@@ -393,4 +359,4 @@ def main():
 
 
 if __name__ == "__main__":
-    exit(main())
+    main()

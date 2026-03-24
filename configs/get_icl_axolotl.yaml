@@ -1,4 +1,4 @@
-input_path: "./data/msmarco-ICL-100k/"
+input_path: "./data/msmarco/"
 dataset_name: "msmarco"
 n_shot: 3
-output_dir: "./data/msmarco"
+output_dir: "./data/msmarco-icl-100k-3shot-v2"

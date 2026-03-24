@@ -1,0 +1,7 @@
+dataset_name: "msmarco_text"
+input_dir: "data/msmarco_text"
+output_dir: "data/msmarco_text_axolotl"
+splits:
+  - train
+  - test
+  - icl_test

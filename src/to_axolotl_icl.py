@@ -1,7 +1,7 @@
 import json
 import random
 import os
-from typing import Dict
+from typing import Dict, List
 
 from tqdm import tqdm
 from datasets import load_dataset
@@ -37,9 +37,9 @@ def generate_icl_variants(target_query, all_docs, all_queries, n):
     neg_docs = random.sample(
         [d for d in all_docs if d["doc_id"] != target_query["doc_id"]], n + 1
     )
-    neg_queries = random.sample(
-        [q for q in all_queries if q["doc_id"] != target_query["doc_id"]], n + 1
-    )
+    # neg_queries = random.sample(
+    #     [q for q in all_queries if q["doc_id"] != target_query["doc_id"]], n + 1
+    # )
 
     if not pos_doc:
         return []
@@ -50,10 +50,10 @@ def generate_icl_variants(target_query, all_docs, all_queries, n):
         "Doc-Positive Front": [pos_doc] + neg_docs[: n - 1],
         "Doc-Positive Back": neg_docs[: n - 1] + [pos_doc],
         "All-Noise Docs": neg_docs[:n],
-        # "Doc-Positive + Query Front": [pos_doc] + neg_docs[:n-1] + neg_queries[:n],
-        # "Doc-Positive + Query Back": neg_docs[:n] + neg_queries[:n-1] + [pos_doc],
+        # "Doc-Positive + Query Front": [pos_doc] + neg_docs[: n - 1] + neg_queries[:n],
+        # "Doc-Positive + Query Back": neg_docs[:n] + neg_queries[: n - 1] + [pos_doc],
         # "All-Noise Docs + Query": neg_docs[:n] + neg_queries[:n],
-        # "Query Only (Noise)": neg_queries[:n]
+        # "Query Only (Noise)": neg_queries[:n],
     }
 
     for name, samples in patterns.items():
@@ -101,7 +101,6 @@ def process_and_save(train_docs, train_queries, dataset, output_path, n_shot):
     """Splits dataset by operation and applies n-shot conversion."""
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-    # Separate samples by their operation type
     # docs = [s for s in dataset if s["operation"] == "indexing"]
     queries = [s for s in dataset if s["operation"] == "query"]
 
@@ -150,7 +149,7 @@ def main(cfg: DictConfig):
     train_docs = [s for s in dataset["train"] if s["operation"] == "indexing"]
     train_queries = [s for s in dataset["train"] if s["operation"] == "query"]
 
-    splits = ["train", "test", "icl_test"]
+    splits: List[str] = ["train", "test", "icl_test"]
     for split in splits:
         if split not in dataset:
             continue
@@ -158,12 +157,11 @@ def main(cfg: DictConfig):
         docs_pool = train_docs
         queries_pool = train_queries
 
-        # special rule for icl_test
         if split == "icl_test":
             docs_pool = [s for s in dataset["icl_test"] if s["operation"] == "indexing"]
             queries_pool = [s for s in dataset["icl_test"] if s["operation"] == "query"]
 
-        out_file = f"{cfg.output_dir}/{cfg.dataset_name}_axolotl/{split}_{cfg.n_shot}shot.jsonl"
+        out_file = f"{cfg.output_dir}/{split}_{cfg.n_shot}shot.jsonl"
         process_and_save(docs_pool, queries_pool, dataset[split], out_file, cfg.n_shot)
 
     print("\nConversion complete for all 7 ICL patterns.")

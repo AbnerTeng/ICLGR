@@ -1,7 +1,8 @@
-model_path: "~/git/ICLGR/checkpoints/Qwen3-1.7B-Base-msmarco-100k-10epochs/"
+model_path: "~/git/ICLGR/checkpoint/Qwen3-1.7B-icl-3shot-add-origin-2e-4-3epochs/checkpoint-3607"
 from_hf: false
 base_model_path:
 train_file: "~/git/ICLGR/data/msmarco/train.jsonl"
-test_file: "~/git/ICLGR/data/msmarco/test.jsonl"
+new_file: "~/git/ICLGR/data/msmarco/icl_test.jsonl"
+test_file: "~/git/ICLGR/data/msmarco-icl-100k-3shot-v2/test_3shot.jsonl"
 max_samples: -1
-output_file: "~/git/ICLGR/retrieve_results/output_file.json"
+output_file: "~/git/ICLGR/retrieve_results/icl_mix_3shot-ckpt3607-test.json"
