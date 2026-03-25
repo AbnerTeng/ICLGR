@@ -1,0 +1,10 @@
+input_path: "./data/msmarco/"
+dataset_name: "msmarco"
+n_shot: 3
+output_dir: "./data/msmarco-docquery-100k-3shot"
+
+type_ratios:
+  mem_retrieval: 0.25
+  mem_indexing:  0.25
+  ctx_match:     0.25
+  ctx_nomatch:   0.25

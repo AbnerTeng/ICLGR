@@ -1,0 +1,52 @@
+# ============================================================
+# Experiment Pipeline Config
+# ============================================================
+experiment_name: "sid_2stage"
+experiment_base_dir: "./experiments"
+
+# n_shot controls Document Base size and output file naming
+n_shot: 3
+
+# ------------------------------------------------------------
+# Data Generation
+# ------------------------------------------------------------
+data_gen:
+  script: "src.to_axolotl_docquery_sid"   # module path (python -m ...)
+  overrides:
+    input_path: "./data/msmarco-sample"   # use sample; change to ./data/msmarco for full run
+
+# ------------------------------------------------------------
+# Training Stages
+# Each stage filters the generated data by pattern type,
+# then runs axolotl. The output checkpoint of stage N becomes
+# the base_model of stage N+1 automatically.
+# ------------------------------------------------------------
+train_stages:
+  - name: "stage1_mem"
+    axolotl_config_template: "configs/axolotl_icl_msmarco-100k.yml"
+    base_model: "./model/Qwen3-1.7B-Base-msmarco-100k-11000"
+    data_types:
+      - mem_retrieval
+      - mem_indexing
+
+  - name: "stage2_ctx"
+    axolotl_config_template: "configs/axolotl_icl_msmarco-100k.yml"
+    base_model: null        # automatically uses stage1 checkpoint
+    data_types:
+      - ctx_match
+      - ctx_nomatch
+      - mem_retrieval
+      - mem_indexing
+
+# ------------------------------------------------------------
+# Evaluation
+# ------------------------------------------------------------
+eval:
+  train_file: "./data/msmarco/train.jsonl"
+  new_file:   "./data/msmarco/icl_test.jsonl"
+  max_samples: -1           # -1 = all
+  targets:
+    - name: "test_mem"      # GR performance (seen docs)
+      split_name: "test"
+    - name: "test_icl"      # ICL performance (unseen docs)
+      split_name: "icl_test"

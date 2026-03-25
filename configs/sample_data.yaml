@@ -1,0 +1,12 @@
+input_dir:  "./data/msmarco"
+output_dir: "./data/msmarco-sample"
+
+# Train split
+n_queries:    1000
+n_extra_docs: 2000   # extra negative docs for ICL context
+
+# Eval splits (test / icl_test) — derived from above if not set
+n_queries_eval:    200
+n_extra_docs_eval: 400
+
+seed: 42

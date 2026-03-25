@@ -2,3 +2,10 @@ input_path: "./data/msmarco/"
 dataset_name: "msmarco"
 n_shot: 3
 output_dir: "./data/msmarco-icl-100k-3shot-v2"
+
+type_ratios:
+  mem_retrieval:  0.2
+  mem_indexing:   0.2
+  ctx_pos_front:  0.2
+  ctx_pos_back:   0.2
+  ctx_noise:      1.0

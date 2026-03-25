@@ -44,3 +44,4 @@ data/
 do_smt.ipynb
 stage1_icl_test*.jsonl
 stage1_test*.jsonl
+instruction.md

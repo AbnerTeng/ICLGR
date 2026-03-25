@@ -41,6 +41,7 @@ logger = logging.getLogger(__name__)
 class DecoderInference:
     """
     Inference class for decoder-only models trained on docid generation task.
+    Supports batched inference for improved GPU utilization.
 
     Supports semantic docid tokens:
     - Semantic: "<|d0_253|> <|d1_56|> <|d2_174|>"
@@ -152,46 +153,68 @@ class DecoderInference:
             num_return_sequences=10,
         )
 
-    @torch.no_grad()
-    def generate_docid(self, text: str, context: Optional[List[str]] = None) -> List[str] | str:
-        """
-        Generate document ID for given text.
-
-        Args:
-            text: Query text
-            context: Optional list of context strings formatted as "(doc_text, doc_id)".
-                     If provided, uses [CTX_SEARCH]; otherwise uses [MEM_SEARCH].
-
-        Returns:
-            Generated document ID(s) as string or list of strings.
-            For semantic docids, returns format like "<|d0_253|> <|d1_56|> <|d2_174|>"
-        """
+    def _format_input(self, text: str, context: Optional[List[str]] = None) -> str:
         if context:
             context_str = " ".join(context)
             user_content = f"[CTX_SEARCH] Context: {context_str} Query: {text} -> Target:"
         else:
             user_content = f"[MEM_SEARCH] Query: {text} -> Target:"
+        return f"<|im_start|>user\n{user_content}<|im_end|>\n<|im_start|>assistant\n"
 
-        inputs_str = f"<|im_start|>user\n{user_content}<|im_end|>\n<|im_start|>assistant\n"
-        inputs = self.tokenizer.encode(inputs_str, return_tensors="pt").to(self.device)
-        # Create logits processor with the actual prompt length for this input
-        prompt_length = inputs.shape[1]
+    @torch.no_grad()
+    def generate_docids_batch(
+        self,
+        texts: List[str],
+        contexts: Optional[List[Optional[List[str]]]] = None,
+    ) -> List[List[str]]:
+        """
+        Generate document IDs for a batch of queries.
 
+        Args:
+            texts: List of query texts.
+            contexts: Optional list of context lists, one per query.
+                      If None, all queries use [MEM_SEARCH].
+
+        Returns:
+            List of lists: for each query, num_return_sequences predicted docids.
+        """
+        if contexts is None:
+            contexts = [None] * len(texts)
+
+        inputs_strs = [self._format_input(t, c) for t, c in zip(texts, contexts)]
+
+        encoded = self.tokenizer(
+            inputs_strs,
+            return_tensors="pt",
+            padding=True,
+        ).to(self.device)
+
+        # With left-padding all sequences share the same padded prompt_length,
+        # so TrieConstrainedLogitsProcessor can use a single prompt_length value.
+        prompt_length = encoded["input_ids"].shape[1]
         logits_processor = self._create_logits_processor(prompt_length)
+
         outputs = self.model.generate(
-            inputs,
+            **encoded,
             generation_config=self.generation_config,
             logits_processor=logits_processor,
         )
-        generated_ids = [output_ids[prompt_length:] for output_ids in outputs]
-        response = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=False)
 
-        if len(response) == 1:
-            raise ValueError("Expected multiple generated docids for retrieval task.")
-        else:
-            cleaned_response = [self._clean_docid(resp) for resp in response]
+        # outputs: (batch_size * num_return_sequences, seq_len)
+        num_seqs = self.generation_config.num_return_sequences
+        results = []
+        for i in range(len(texts)):
+            batch_outputs = outputs[i * num_seqs : (i + 1) * num_seqs]
+            generated_ids = [out[prompt_length:] for out in batch_outputs]
+            responses = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=False)
+            results.append([self._clean_docid(r) for r in responses])
 
-        return cleaned_response
+        return results
+
+    @torch.no_grad()
+    def generate_docid(self, text: str, context: Optional[List[str]] = None) -> List[str]:
+        """Generate document IDs for a single query (wraps generate_docids_batch)."""
+        return self.generate_docids_batch([text], [context])[0]
 
     def _clean_docid(self, docid: str) -> str:
         """
@@ -229,7 +252,10 @@ class DecoderInference:
             return docid.replace("<|", "").replace("|>", "").strip()
 
     def evaluate_on_test_set(
-        self, test_file: str, max_samples: Optional[int] = None
+        self,
+        test_file: str,
+        max_samples: Optional[int] = None,
+        batch_size: int = 8,
     ) -> Dict[str, Any]:
         """
         Evaluate the model on a test set and compute accuracy.
@@ -237,6 +263,7 @@ class DecoderInference:
         Args:
             test_file: Path to test JSON file
             max_samples: Maximum number of samples to evaluate (None for all)
+            batch_size: Number of queries to process in parallel
 
         Returns:
             Dictionary with evaluation results
@@ -249,57 +276,61 @@ class DecoderInference:
         if max_samples:
             test_data = test_data[:max_samples]
 
-        logger.info(f"Evaluating on {len(test_data)} samples...")
+        logger.info(f"Evaluating on {len(test_data)} samples (batch_size={batch_size})...")
 
         hit_at_1 = 0
         hit_at_10 = 0
         total = len(test_data)
         predictions = []
 
-        pbar = tqdm(test_data, desc="Evaluating")
+        pbar = tqdm(range(0, total, batch_size), desc="Evaluating")
 
-        for idx, item in enumerate(pbar, 1):
-            if item.get("conversations") is None:
-                text = item["text"]
-                true_docid = item["doc_id"]
-            else:
-                text = item["conversations"][0]["content"]
-                true_docid = item["conversations"][1]["content"]
+        for batch_start in pbar:
+            batch = test_data[batch_start : batch_start + batch_size]
 
-            predicted_docids = self.generate_docid(text)
-            logger.debug(f"Predicted_docids: {predicted_docids}, True_docid: {true_docid}")
+            texts, true_docids = [], []
+            for item in batch:
+                if item.get("conversations") is None:
+                    texts.append(item["text"])
+                    true_docids.append(item["doc_id"])
+                else:
+                    texts.append(item["conversations"][0]["content"])
+                    true_docids.append(item["conversations"][1]["content"])
 
-            true_docid_normalized = str(true_docid).strip()
+            batch_predicted = self.generate_docids_batch(texts)
 
-            if isinstance(predicted_docids, list):
+            for item, text, true_docid, predicted_docids in zip(
+                batch, texts, true_docids, batch_predicted
+            ):
+                logger.debug(f"Predicted: {predicted_docids}, True: {true_docid}")
+
+                true_docid_normalized = str(true_docid).strip()
                 predicted_docids_normalized = [str(p).strip() for p in predicted_docids]
-            else:
-                predicted_docids_normalized = [str(predicted_docids).strip()]
 
-            is_hit_1 = true_docid_normalized == predicted_docids_normalized[0]
+                is_hit_1 = true_docid_normalized == predicted_docids_normalized[0]
+                is_hit_10 = true_docid_normalized in predicted_docids_normalized
 
-            if is_hit_1:
-                hit_at_1 += 1
+                if is_hit_1:
+                    hit_at_1 += 1
+                if is_hit_10:
+                    hit_at_10 += 1
 
-            is_hit_10 = true_docid_normalized in predicted_docids_normalized
+                predictions.append(
+                    {
+                        "text": text,
+                        "true_docid": true_docid,
+                        "predicted_docid": predicted_docids,
+                        "hit_at_1": is_hit_1,
+                        "hit_at_10": is_hit_10,
+                        "metadata": item.get("metadata"),
+                    }
+                )
 
-            if is_hit_10:
-                hit_at_10 += 1
-
-            current_hit_1 = hit_at_1 / idx
-            current_hit_10 = hit_at_10 / idx
+            done = min(batch_start + batch_size, total)
             pbar.set_postfix(
-                {"Hit@1": f"{current_hit_1:.4f}", "Hit@10": f"{current_hit_10:.4f}"}
-            )
-
-            predictions.append(
                 {
-                    "text": text,
-                    "true_docid": true_docid,
-                    "predicted_docid": predicted_docids,
-                    "hit_at_1": is_hit_1,
-                    "hit_at_10": is_hit_10,
-                    "metadata": item.get("metadata"),
+                    "Hit@1": f"{hit_at_1 / done:.4f}",
+                    "Hit@10": f"{hit_at_10 / done:.4f}",
                 }
             )
 
@@ -324,6 +355,7 @@ class DecoderInference:
 @hydra.main(config_path="../configs", config_name="inference_conf", version_base=None)
 def main(cfg: DictConfig) -> int:
     max_samples = cfg.max_samples if cfg.max_samples > 0 else None
+    batch_size = cfg.get("batch_size", 8)
     output_file = os.path.expanduser(cfg.output_file)
 
     inference = DecoderInference(
@@ -338,7 +370,7 @@ def main(cfg: DictConfig) -> int:
 
     if not os.path.exists(output_file):
         results = inference.evaluate_on_test_set(
-            os.path.expanduser(cfg.test_file), max_samples
+            os.path.expanduser(cfg.test_file), max_samples, batch_size
         )
 
         if output_file:
