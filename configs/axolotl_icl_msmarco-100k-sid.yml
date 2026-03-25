@@ -1,7 +1,7 @@
-base_model: ./models/Qwen3-1.7B-Base-msmarco-100k-10epochs
+base_model: Abner0803/Qwen3-1.7B-Base-msmarco-100k-11000
 
 datasets:
-  - path: ./data/msmarco-sample-docquery-sid-3shot/train_3shot.jsonl  
+  - path: /semantic-search-pvc/users/lala/ICLGR_project/ICLGR/data/msmarco-docquery-sid-3shot/train_3shot.jsonl  
     type: chat_template
     chat_template: tokenizer_default_fallback_chatml
     field_messages: conversations
@@ -25,17 +25,17 @@ train_on_eos: "turn"
 streaming: false
 streaming_multipack_buffer_size: 10000
 shuffle_merged_datasets: true
-output_dir: ./checkpoint/Qwen3-1.7B-icl-sid-3shot-2e-4-3epochs
+output_dir: ./checkpoint/Qwen3-1.7B-icl-sid-3shot-1e-4-3epochs
 sequence_len: 2048
-sample_packing: ftruee
+sample_packing: true
 flash_attention: true
 xformers_attention: false
 flex_attention: false
-sdp_attention: true
+sdp_attention: false
 # overrides_of_model_config:
 #   _attn_implementation: "sdpa"
 
-gradient_accumulation_steps: 16
+gradient_accumulation_steps: 4
 micro_batch_size: 8
 dataloader_num_workers: 6
 num_epochs: 3
@@ -55,7 +55,7 @@ save_steps: 500
 save_total_limit: 3
 
 wandb_project: "ICLGR-MSMARCO"
-wandb_entity: abnerden0803-national-taiwan-university
+wandb_entity: "lala83"
 wandb_watch:
 wandb_name: "qwen3-1.7b-icl-sid-3shot-3epochs"
 wandb_log_model:
