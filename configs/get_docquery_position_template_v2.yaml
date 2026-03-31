@@ -1,0 +1,10 @@
+input_path: "./data/msmarco/"
+dataset_name: "msmarco"
+n_shot: 3
+output_dir: "./data/msmarco-docquery-100k-3shot_position_template_v2"
+
+type_ratios:
+  doc_pos_front: 0.5   
+  doc_pos_back:  0.5   
+  all_noise:     1.0     
+  zero_shot:     1.0     
