@@ -1,7 +1,5 @@
-dataset_name: "msmarco_text"
-input_dir: "data/msmarco_text"
-output_dir: "data/msmarco_text_axolotl"
+dataset_name: "msmarco"
+input_dir: "data/msmarco"
+output_dir: "data/msmarco_axolotl"
 splits:
-  - train
-  - test
-  - icl_test
+  - train_topic_align

@@ -19,7 +19,6 @@ from typing import Dict, List, Tuple
 
 import hydra
 from omegaconf import DictConfig
-from tqdm import tqdm
 
 
 def load_split(path: str) -> Tuple[List[Dict], List[Dict]]:
@@ -101,21 +100,35 @@ def main(cfg: DictConfig) -> None:
         queries, docs = load_split(src)
 
         # Use smaller counts for test/icl_test
-        n_q = cfg.n_queries if split == "train" else cfg.get("n_queries_eval", cfg.n_queries // 5)
-        n_d = cfg.n_extra_docs if split == "train" else cfg.get("n_extra_docs_eval", cfg.n_extra_docs // 5)
+        n_q = (
+            cfg.n_queries
+            if split == "train"
+            else cfg.get("n_queries_eval", cfg.n_queries // 5)
+        )
+        n_d = (
+            cfg.n_extra_docs
+            if split == "train"
+            else cfg.get("n_extra_docs_eval", cfg.n_extra_docs // 5)
+        )
 
         # For test split only: restrict to queries whose positive doc is in train
         allowed = train_positive_doc_ids if split == "test" else None
-        sampled = sample_split(queries, docs, n_q, n_d, seed=cfg.seed, allowed_doc_ids=allowed)
+        sampled = sample_split(
+            queries, docs, n_q, n_d, seed=cfg.seed, allowed_doc_ids=allowed
+        )
 
         # Record train positive doc ids for filtering eval splits
         if split == "train":
-            train_positive_doc_ids = {s["doc_id"] for s in sampled if s["operation"] == "indexing"}
+            train_positive_doc_ids = {
+                s["doc_id"] for s in sampled if s["operation"] == "indexing"
+            }
         save_jsonl(sampled, dst)
 
         n_q_out = sum(1 for s in sampled if s["operation"] == "query")
         n_d_out = sum(1 for s in sampled if s["operation"] == "indexing")
-        print(f"  [{split}] query={n_q_out}  indexing={n_d_out}  total={len(sampled)}  -> {dst}")
+        print(
+            f"  [{split}] query={n_q_out}  indexing={n_d_out}  total={len(sampled)}  -> {dst}"
+        )
 
 
 if __name__ == "__main__":

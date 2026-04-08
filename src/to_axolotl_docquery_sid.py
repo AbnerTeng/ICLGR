@@ -2,9 +2,8 @@ import json
 import random
 import re
 import os
-from functools import partial
 from multiprocessing import Pool, cpu_count
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 from tqdm import tqdm
 from datasets import load_dataset
@@ -25,9 +24,11 @@ def _parse_dims(doc_id: str) -> List[str]:
 
 def _apply_shuffle(doc_id: str, rand_vals: Dict[str, int]) -> str:
     """Replace each <|dN_xxx|> token's number with rand_vals[dN]."""
+
     def _replace(m):
         dim = m.group(1)
         return f"<|{dim}_{rand_vals[dim]}|>"
+
     return _TOKEN_RE.sub(_replace, doc_id)
 
 
@@ -60,6 +61,7 @@ def make_shuffled_id_map(doc_ids: List[str]) -> Dict[str, str]:
 # Pattern generators
 # ---------------------------------------------------------------------------
 
+
 def generate_mem_retrieval(target_query: Dict) -> Dict:
     """mem_retrieval: query -> doc_id (parametric memory, no shuffling).
 
@@ -68,11 +70,7 @@ def generate_mem_retrieval(target_query: Dict) -> Dict:
     Answer: {true_doc_id}
     """
     true_doc_id = target_query["doc_id"]
-    user_content = (
-        "[MEM_SEARCH]\n"
-        f"Query: {target_query['text']}\n"
-        "Answer:"
-    )
+    user_content = f"[MEM_SEARCH]\nQuery: {target_query['text']}\nAnswer:"
     return {
         "conversations": [
             {"role": "user", "content": user_content},
@@ -90,11 +88,7 @@ def generate_mem_indexing(target_doc: Dict) -> Dict:
     Answer: {true_doc_id}
     """
     doc_id = target_doc["doc_id"]
-    user_content = (
-        "[MEM_SEARCH]\n"
-        f"Content: {target_doc['text']}\n"
-        "Answer:"
-    )
+    user_content = f"[MEM_SEARCH]\nContent: {target_doc['text']}\nAnswer:"
     return {
         "conversations": [
             {"role": "user", "content": user_content},
@@ -137,9 +131,11 @@ def generate_ctx_match(
     if not pos_doc:
         return None
 
-    pool = eligible_docs if eligible_docs is not None else [
-        d for d in all_docs if d["doc_id"] in doc_to_queries
-    ]
+    pool = (
+        eligible_docs
+        if eligible_docs is not None
+        else [d for d in all_docs if d["doc_id"] in doc_to_queries]
+    )
     eligible_neg_docs = [d for d in pool if d["doc_id"] != true_doc_id]
     if len(eligible_neg_docs) < n_docs - 1:
         return None
@@ -202,9 +198,11 @@ def generate_ctx_nomatch(
     """
     true_doc_id = target_query["doc_id"]
 
-    pool = eligible_docs if eligible_docs is not None else [
-        d for d in all_docs if d["doc_id"] in doc_to_queries
-    ]
+    pool = (
+        eligible_docs
+        if eligible_docs is not None
+        else [d for d in all_docs if d["doc_id"] in doc_to_queries]
+    )
     eligible_for_qa = [d for d in pool if d["doc_id"] != true_doc_id]
     if len(eligible_for_qa) < n_docs:
         return None
@@ -252,6 +250,7 @@ def generate_ctx_nomatch(
 # Pipeline
 # ---------------------------------------------------------------------------
 
+
 def subsample(examples: List, target_n: int) -> List:
     if len(examples) <= target_n:
         return examples
@@ -262,14 +261,23 @@ def _process_query(args):
     """Worker function for multiprocessing."""
     q, train_docs, doc_to_queries, n_shot, doc_id_to_doc, eligible_docs = args
     mem = generate_mem_retrieval(q)
-    ctx_m = generate_ctx_match(q, train_docs, doc_to_queries, n_docs=n_shot,
-                                doc_id_to_doc=doc_id_to_doc, eligible_docs=eligible_docs)
-    ctx_nm = generate_ctx_nomatch(q, train_docs, doc_to_queries, n_docs=n_shot,
-                                   eligible_docs=eligible_docs)
+    ctx_m = generate_ctx_match(
+        q,
+        train_docs,
+        doc_to_queries,
+        n_docs=n_shot,
+        doc_id_to_doc=doc_id_to_doc,
+        eligible_docs=eligible_docs,
+    )
+    ctx_nm = generate_ctx_nomatch(
+        q, train_docs, doc_to_queries, n_docs=n_shot, eligible_docs=eligible_docs
+    )
     return mem, ctx_m, ctx_nm
 
 
-def process_and_save(train_docs, train_queries, dataset, output_path, n_shot, type_ratios):
+def process_and_save(
+    train_docs, train_queries, dataset, output_path, n_shot, type_ratios
+):
     """Generates all 4 format types with shuffled IDs for CTX patterns."""
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
@@ -297,11 +305,13 @@ def process_and_save(train_docs, train_queries, dataset, output_path, n_shot, ty
     ]
 
     with Pool(processes=n_workers) as pool:
-        results = list(tqdm(
-            pool.imap(_process_query, args_list, chunksize=64),
-            total=len(queries),
-            desc="Generating query examples",
-        ))
+        results = list(
+            tqdm(
+                pool.imap(_process_query, args_list, chunksize=64),
+                total=len(queries),
+                desc="Generating query examples",
+            )
+        )
 
     for mem, ctx_m, ctx_nm in results:
         mem_retrieval_examples.append(mem)
@@ -311,19 +321,20 @@ def process_and_save(train_docs, train_queries, dataset, output_path, n_shot, ty
             ctx_nomatch_examples.append(ctx_nm)
 
     mem_indexing_examples = [
-        generate_mem_indexing(d)
-        for d in tqdm(docs, desc="Generating doc examples")
+        generate_mem_indexing(d) for d in tqdm(docs, desc="Generating doc examples")
     ]
 
     pool = {
         "mem_retrieval": mem_retrieval_examples,
-        "mem_indexing":  mem_indexing_examples,
-        "ctx_match":     ctx_match_examples,
-        "ctx_nomatch":   ctx_nomatch_examples,
+        "mem_indexing": mem_indexing_examples,
+        "ctx_match": ctx_match_examples,
+        "ctx_nomatch": ctx_nomatch_examples,
     }
     n_queries = len(queries)
-    print(f"  queries={n_queries}  docs={len(docs)}  raw: " +
-          "  ".join(f"{k}={len(v)}" for k, v in pool.items()))
+    print(
+        f"  queries={n_queries}  docs={len(docs)}  raw: "
+        + "  ".join(f"{k}={len(v)}" for k, v in pool.items())
+    )
     subsampled = {}
     for name, examples in pool.items():
         ratio = type_ratios.get(name, 1.0)
@@ -342,7 +353,9 @@ def process_and_save(train_docs, train_queries, dataset, output_path, n_shot, ty
         print(f"  - {name:<16} {len(exs)}")
 
 
-@hydra.main(config_path="../configs", config_name="get_docquery_sid_axolotl", version_base=None)
+@hydra.main(
+    config_path="../configs", config_name="get_docquery_sid_axolotl", version_base=None
+)
 def main(cfg: DictConfig):
     dataset = load_dataset(
         "json",
@@ -368,8 +381,14 @@ def main(cfg: DictConfig):
             queries_pool = [s for s in dataset["icl_test"] if s["operation"] == "query"]
 
         out_file = f"{cfg.output_dir}/{split}_{cfg.n_shot}shot.jsonl"
-        ratios = dict(cfg.test_type_ratios) if split == "test" and hasattr(cfg, "test_type_ratios") else dict(cfg.type_ratios)
-        process_and_save(docs_pool, queries_pool, dataset[split], out_file, cfg.n_shot, ratios)
+        ratios = (
+            dict(cfg.test_type_ratios)
+            if split == "test" and hasattr(cfg, "test_type_ratios")
+            else dict(cfg.type_ratios)
+        )
+        process_and_save(
+            docs_pool, queries_pool, dataset[split], out_file, cfg.n_shot, ratios
+        )
 
     print("\nConversion complete for all format types.")
 

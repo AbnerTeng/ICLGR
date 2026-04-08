@@ -17,11 +17,7 @@ def generate_mem_retrieval(target_query: Dict) -> Dict:
     Answer: {true_doc_id}
     """
     true_doc_id = target_query["doc_id"]
-    user_content = (
-        "[MEM_SEARCH]\n"
-        f"Query: {target_query['text']}\n"
-        "Answer:"
-    )
+    user_content = f"[MEM_SEARCH]\nQuery: {target_query['text']}\nAnswer:"
     return {
         "conversations": [
             {"role": "user", "content": user_content},
@@ -39,11 +35,7 @@ def generate_mem_indexing(target_doc: Dict) -> Dict:
     Answer: {true_doc_id}
     """
     doc_id = target_doc["doc_id"]
-    user_content = (
-        "[MEM_SEARCH]\n"
-        f"Content: {target_doc['text']}\n"
-        "Answer:"
-    )
+    user_content = f"[MEM_SEARCH]\nContent: {target_doc['text']}\nAnswer:"
     return {
         "conversations": [
             {"role": "user", "content": user_content},
@@ -79,7 +71,8 @@ def generate_ctx_match(
         return None
 
     eligible_neg_docs = [
-        d for d in all_docs
+        d
+        for d in all_docs
         if d["doc_id"] != true_doc_id and d["doc_id"] in doc_to_queries
     ]
     if len(eligible_neg_docs) < n_docs - 1:
@@ -92,8 +85,7 @@ def generate_ctx_match(
     random.shuffle(context_docs)
 
     doc_base_lines = [
-        f"DocID: {doc['doc_id']} | Content: {doc['text']}"
-        for doc in context_docs
+        f"DocID: {doc['doc_id']} | Content: {doc['text']}" for doc in context_docs
     ]
     qa_pairs = [
         (random.choice(doc_to_queries[doc["doc_id"]]), doc["doc_id"])
@@ -133,7 +125,8 @@ def generate_ctx_nomatch(
 
     # Need n_docs docs total: n_docs-1 have queries for QA demos, 1 is noise
     eligible_for_qa = [
-        d for d in all_docs
+        d
+        for d in all_docs
         if d["doc_id"] != true_doc_id and d["doc_id"] in doc_to_queries
     ]
     if len(eligible_for_qa) < n_docs:
@@ -147,12 +140,10 @@ def generate_ctx_nomatch(
     random.shuffle(context_docs)
 
     doc_base_lines = [
-        f"DocID: {doc['doc_id']} | Content: {doc['text']}"
-        for doc in context_docs
+        f"DocID: {doc['doc_id']} | Content: {doc['text']}" for doc in context_docs
     ]
     qa_pairs = [
-        (random.choice(doc_to_queries[doc["doc_id"]]), doc["doc_id"])
-        for doc in qa_docs
+        (random.choice(doc_to_queries[doc["doc_id"]]), doc["doc_id"]) for doc in qa_docs
     ]
     random.shuffle(qa_pairs)
     qa_lines = [f"Query: {q['text']} | DocID: {doc_id}" for q, doc_id in qa_pairs]
@@ -182,7 +173,9 @@ def subsample(examples: List, target_n: int) -> List:
     return random.sample(examples, target_n)
 
 
-def process_and_save(train_docs, train_queries, dataset, output_path, n_shot, type_ratios):
+def process_and_save(
+    train_docs, train_queries, dataset, output_path, n_shot, type_ratios
+):
     """Generates all 4 format types with configurable ratios and saves to JSONL."""
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
@@ -212,16 +205,15 @@ def process_and_save(train_docs, train_queries, dataset, output_path, n_shot, ty
             ctx_nomatch_examples.append(ex)
 
     mem_indexing_examples = [
-        generate_mem_indexing(d)
-        for d in tqdm(docs, desc="Generating doc examples")
+        generate_mem_indexing(d) for d in tqdm(docs, desc="Generating doc examples")
     ]
 
     # Subsample each type according to ratios
     pool = {
         "mem_retrieval": mem_retrieval_examples,
-        "mem_indexing":  mem_indexing_examples,
-        "ctx_match":     ctx_match_examples,
-        "ctx_nomatch":   ctx_nomatch_examples,
+        "mem_indexing": mem_indexing_examples,
+        "ctx_match": ctx_match_examples,
+        "ctx_nomatch": ctx_nomatch_examples,
     }
     total_raw = sum(len(v) for v in pool.values())
     subsampled = {}
@@ -242,7 +234,9 @@ def process_and_save(train_docs, train_queries, dataset, output_path, n_shot, ty
         print(f"  - {name:<16} {len(exs)}")
 
 
-@hydra.main(config_path="../configs", config_name="get_docquery_axolotl", version_base=None)
+@hydra.main(
+    config_path="../configs", config_name="get_docquery_axolotl", version_base=None
+)
 def main(cfg: DictConfig):
     dataset = load_dataset(
         "json",
@@ -268,7 +262,14 @@ def main(cfg: DictConfig):
             queries_pool = [s for s in dataset["icl_test"] if s["operation"] == "query"]
 
         out_file = f"{cfg.output_dir}/{split}_{cfg.n_shot}shot.jsonl"
-        process_and_save(docs_pool, queries_pool, dataset[split], out_file, cfg.n_shot, dict(cfg.type_ratios))
+        process_and_save(
+            docs_pool,
+            queries_pool,
+            dataset[split],
+            out_file,
+            cfg.n_shot,
+            dict(cfg.type_ratios),
+        )
 
     print("\nConversion complete for all format types.")
 
