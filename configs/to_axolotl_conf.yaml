@@ -2,4 +2,4 @@ dataset_name: "msmarco"
 input_dir: "data/msmarco"
 output_dir: "data/msmarco_axolotl"
 splits:
-  - train_topic_align
+  - train_with_pseudo

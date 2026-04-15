@@ -1,25 +1,25 @@
 base_model: Qwen/Qwen3-1.7B-Base
 datasets:
-- path: ./data/msmarco_text_axolotl/train_with_pseudo_axolotl.jsonl
-  type: chat_template
-  chat_template: tokenizer_default_fallback_chatml
-  field_messages: conversations
-  message_property_mappings:
-    role: role
-    content: content
-  roles:
-    assistant:
-      - assistant
-      - gpt
-      - model
-    user:
-      - user
-      - human
-    system:
-      - system
+  - path: ./data/msmarco_text_axolotl/train_with_pseudo_axolotl.jsonl
+    type: chat_template
+    chat_template: tokenizer_default_fallback_chatml
+    field_messages: conversations
+    message_property_mappings:
+      role: role
+      content: content
+    roles:
+      assistant:
+        - assistant
+        - gpt
+        - model
+      user:
+        - user
+        - human
+      system:
+        - system
 
-  roles_to_train: ["assistant"]
-  train_on_eos: "turn"
+    roles_to_train: ["assistant"]
+    train_on_eos: "turn"
 
 streaming: true
 streaming_multipack_buffer_size: 10000
