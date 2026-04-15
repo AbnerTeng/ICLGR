@@ -5,6 +5,8 @@ retrieve_results/
 last_run_prepared/
 outputs/
 checkpoint
+reasoning_log.json
+instruct.md
 .python-version
 .venv
 *__pycache__/

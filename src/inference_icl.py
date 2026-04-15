@@ -153,7 +153,9 @@ class DecoderInference:
         )
 
     @torch.no_grad()
-    def generate_docid(self, text: str, context: Optional[List[str]] = None) -> List[str] | str:
+    def generate_docid(
+        self, text: str, context: Optional[List[str]] = None
+    ) -> List[str] | str:
         """
         Generate document ID for given text.
 
@@ -168,11 +170,15 @@ class DecoderInference:
         """
         if context:
             context_str = " ".join(context)
-            user_content = f"[CTX_SEARCH] Context: {context_str} Query: {text} -> Target:"
+            user_content = (
+                f"[CTX_SEARCH] Context: {context_str} Query: {text} -> Target:"
+            )
         else:
             user_content = f"[MEM_SEARCH] Query: {text} -> Target:"
 
-        inputs_str = f"<|im_start|>user\n{user_content}<|im_end|>\n<|im_start|>assistant\n"
+        inputs_str = (
+            f"<|im_start|>user\n{user_content}<|im_end|>\n<|im_start|>assistant\n"
+        )
         inputs = self.tokenizer.encode(inputs_str, return_tensors="pt").to(self.device)
         # Create logits processor with the actual prompt length for this input
         prompt_length = inputs.shape[1]
@@ -267,7 +273,9 @@ class DecoderInference:
                 true_docid = item["conversations"][1]["content"]
 
             predicted_docids = self.generate_docid(text)
-            logger.debug(f"Predicted_docids: {predicted_docids}, True_docid: {true_docid}")
+            logger.debug(
+                f"Predicted_docids: {predicted_docids}, True_docid: {true_docid}"
+            )
 
             true_docid_normalized = str(true_docid).strip()
 

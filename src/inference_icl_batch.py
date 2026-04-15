@@ -156,7 +156,9 @@ class DecoderInference:
     def _format_input(self, text: str, context: Optional[List[str]] = None) -> str:
         if context:
             context_str = " ".join(context)
-            user_content = f"[CTX_SEARCH] Context: {context_str} Query: {text} -> Target:"
+            user_content = (
+                f"[CTX_SEARCH] Context: {context_str} Query: {text} -> Target:"
+            )
         else:
             user_content = f"[MEM_SEARCH] Query: {text} -> Target:"
         return f"<|im_start|>user\n{user_content}<|im_end|>\n<|im_start|>assistant\n"
@@ -206,13 +208,17 @@ class DecoderInference:
         for i in range(len(texts)):
             batch_outputs = outputs[i * num_seqs : (i + 1) * num_seqs]
             generated_ids = [out[prompt_length:] for out in batch_outputs]
-            responses = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=False)
+            responses = self.tokenizer.batch_decode(
+                generated_ids, skip_special_tokens=False
+            )
             results.append([self._clean_docid(r) for r in responses])
 
         return results
 
     @torch.no_grad()
-    def generate_docid(self, text: str, context: Optional[List[str]] = None) -> List[str]:
+    def generate_docid(
+        self, text: str, context: Optional[List[str]] = None
+    ) -> List[str]:
         """Generate document IDs for a single query (wraps generate_docids_batch)."""
         return self.generate_docids_batch([text], [context])[0]
 
@@ -276,7 +282,9 @@ class DecoderInference:
         if max_samples:
             test_data = test_data[:max_samples]
 
-        logger.info(f"Evaluating on {len(test_data)} samples (batch_size={batch_size})...")
+        logger.info(
+            f"Evaluating on {len(test_data)} samples (batch_size={batch_size})..."
+        )
 
         hit_at_1 = 0
         hit_at_10 = 0
