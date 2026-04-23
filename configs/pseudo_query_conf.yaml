@@ -1,0 +1,12 @@
+paths:
+  msmarco_train: /mnt/storage/abner/git/ICLGR/data/msmarco_text/train.jsonl
+  pseudo_queries: /mnt/storage/abner/git/ICLGR/data/msmarco_text/pseudo_queries.jsonl
+gen_pseudo_queries:
+  model: doc2query/msmarco-t5-base-v1
+  n_queries: 5
+  batch_size: 64
+  max_doc_len: 256
+  max_query_len: 64
+  device: cuda
+
+

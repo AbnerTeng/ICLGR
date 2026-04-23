@@ -24,13 +24,16 @@ from omegaconf import DictConfig, OmegaConf
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def run_cmd(cmd: List[str], desc: str = "") -> None:
     label = desc or " ".join(cmd[:3])
     print(f"\n[RUN] {label}")
     print(f"  $ {' '.join(cmd)}")
     result = subprocess.run(cmd)
     if result.returncode != 0:
-        raise RuntimeError(f"Command failed (exit {result.returncode}): {' '.join(cmd)}")
+        raise RuntimeError(
+            f"Command failed (exit {result.returncode}): {' '.join(cmd)}"
+        )
 
 
 def find_latest_checkpoint(checkpoint_dir: str) -> str:
@@ -72,6 +75,7 @@ def patch_axolotl_config(template: str, dst: str, patches: Dict) -> None:
 # Pipeline steps
 # ---------------------------------------------------------------------------
 
+
 def step_generate_data(cfg: DictConfig, experiment_dir: str) -> Dict[str, str]:
     """Run data generation script; return mapping of split -> file path."""
     data_dir = os.path.join(experiment_dir, "data")
@@ -79,10 +83,12 @@ def step_generate_data(cfg: DictConfig, experiment_dir: str) -> Dict[str, str]:
     n_shot = cfg.get("n_shot", 3)
 
     cmd = [
-        sys.executable, "-m", dg.script,
+        sys.executable,
+        "-m",
+        dg.script,
         f"output_dir={data_dir}",
         f"n_shot={n_shot}",
-        "hydra.run.dir=.",          # prevent hydra from changing cwd
+        "hydra.run.dir=.",  # prevent hydra from changing cwd
         "hydra/job_logging=disabled",
         "hydra/hydra_logging=disabled",
     ]
@@ -109,7 +115,9 @@ def step_train_stage(
 
     # Filter training data to the patterns for this stage
     stage_train_file = os.path.join(stage_dir, "train.jsonl")
-    n = filter_jsonl_by_pattern(data_paths["train"], stage_train_file, list(stage.data_types))
+    n = filter_jsonl_by_pattern(
+        data_paths["train"], stage_train_file, list(stage.data_types)
+    )
     print(f"  Filtered {n} examples with patterns {list(stage.data_types)}")
 
     # Build dataset entry matching axolotl format
@@ -169,7 +177,9 @@ def step_evaluate(
         new_file = eval_cfg.get("new_file", "")
 
         cmd = [
-            sys.executable, "-m", "src.inference_icl",
+            sys.executable,
+            "-m",
+            "src.inference_icl",
             f"model_path={os.path.abspath(model_path)}",
             "from_hf=false",
             f"train_file={eval_cfg.train_file}",
@@ -186,11 +196,13 @@ def step_evaluate(
         with open(output_file) as f:
             res = json.load(f)
         all_results[target.name] = {
-            "hit_at_1":  res["hit_at_1"],
+            "hit_at_1": res["hit_at_1"],
             "hit_at_10": res["hit_at_10"],
-            "total":     res["total"],
+            "total": res["total"],
         }
-        print(f"  [{target.name}] Hit@1={res['hit_at_1']:.4f}  Hit@10={res['hit_at_10']:.4f}  (n={res['total']})")
+        print(
+            f"  [{target.name}] Hit@1={res['hit_at_1']:.4f}  Hit@10={res['hit_at_10']:.4f}  (n={res['total']})"
+        )
 
     return all_results
 
@@ -198,6 +210,7 @@ def step_evaluate(
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
 
 @hydra.main(config_path="../configs", config_name="pipeline", version_base=None)
 def main(cfg: DictConfig) -> None:
@@ -208,10 +221,10 @@ def main(cfg: DictConfig) -> None:
 
     OmegaConf.save(cfg, os.path.join(exp_dir, "pipeline_config.yaml"))
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"  Experiment : {exp_name}")
     print(f"  Directory  : {exp_dir}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     # Step 1: Generate data
     print("\n[STEP 1] Data Generation")
@@ -238,7 +251,7 @@ def main(cfg: DictConfig) -> None:
     # Summary
     summary = {
         "experiment_name": exp_name,
-        "experiment_dir":  exp_dir,
+        "experiment_dir": exp_dir,
         "final_checkpoint": prev_checkpoint,
         "eval_results": eval_results,
     }
@@ -246,9 +259,9 @@ def main(cfg: DictConfig) -> None:
     with open(summary_path, "w") as f:
         json.dump(summary, f, indent=2, ensure_ascii=False)
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"  Done! Summary: {summary_path}")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
 
 if __name__ == "__main__":

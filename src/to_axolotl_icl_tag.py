@@ -13,19 +13,23 @@ from omegaconf import DictConfig
 # Format helpers
 # ---------------------------------------------------------------------------
 
+
 def _format_ctx_item(sample: Dict) -> str:
     return f"({sample['text']}, {sample['doc_id']})"
 
 
 def _build_ctx_search(context_docs: List, target_query: Dict, answer: str) -> Dict:
     context_str = " ".join(_format_ctx_item(d) for d in context_docs)
-    user_content = f"[CTX_SEARCH] Context: {context_str} Query: {target_query['text']} -> Target:"
+    user_content = (
+        f"[CTX_SEARCH] Context: {context_str} Query: {target_query['text']} -> Target:"
+    )
     return user_content, answer
 
 
 # ---------------------------------------------------------------------------
 # Pattern generators
 # ---------------------------------------------------------------------------
+
 
 def generate_mem_retrieval(target_query: Dict) -> Dict:
     """mem_retrieval: zero-shot query -> doc_id (parametric memory).
@@ -87,9 +91,7 @@ def generate_ctx_pos_front(
     }
 
 
-def generate_ctx_pos_back(
-    target_query: Dict, all_docs: List, n: int
-) -> Optional[Dict]:
+def generate_ctx_pos_back(target_query: Dict, all_docs: List, n: int) -> Optional[Dict]:
     """ctx_pos_back: CTX_SEARCH with positive doc placed last in context.
 
     Answer: {true_doc_id}
@@ -115,9 +117,7 @@ def generate_ctx_pos_back(
     }
 
 
-def generate_ctx_noise(
-    target_query: Dict, all_docs: List, n: int
-) -> Optional[Dict]:
+def generate_ctx_noise(target_query: Dict, all_docs: List, n: int) -> Optional[Dict]:
     """ctx_noise: CTX_SEARCH with no positive doc in context.
 
     Answer: [NO_MATCH] {true_doc_id}
@@ -143,6 +143,7 @@ def generate_ctx_noise(
 # Subsample helper
 # ---------------------------------------------------------------------------
 
+
 def subsample(examples: List, target_n: int) -> List:
     if len(examples) <= target_n:
         return examples
@@ -153,7 +154,10 @@ def subsample(examples: List, target_n: int) -> List:
 # Main pipeline
 # ---------------------------------------------------------------------------
 
-def process_and_save(train_docs, _train_queries, dataset, output_path, n_shot, type_ratios):
+
+def process_and_save(
+    train_docs, _train_queries, dataset, output_path, n_shot, type_ratios
+):
     """Generates all pattern types with configurable ratios and saves to JSONL."""
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
@@ -183,17 +187,16 @@ def process_and_save(train_docs, _train_queries, dataset, output_path, n_shot, t
             ctx_noise_examples.append(ex)
 
     mem_indexing_examples = [
-        generate_mem_indexing(d)
-        for d in tqdm(docs, desc="Generating doc examples")
+        generate_mem_indexing(d) for d in tqdm(docs, desc="Generating doc examples")
     ]
 
     # Subsample each type according to ratios
     pool = {
-        "mem_retrieval":  mem_retrieval_examples,
-        "mem_indexing":   mem_indexing_examples,
-        "ctx_pos_front":  ctx_pos_front_examples,
-        "ctx_pos_back":   ctx_pos_back_examples,
-        "ctx_noise":      ctx_noise_examples,
+        "mem_retrieval": mem_retrieval_examples,
+        "mem_indexing": mem_indexing_examples,
+        "ctx_pos_front": ctx_pos_front_examples,
+        "ctx_pos_back": ctx_pos_back_examples,
+        "ctx_noise": ctx_noise_examples,
     }
     total_raw = sum(len(v) for v in pool.values())
     subsampled = {}
@@ -240,7 +243,14 @@ def main(cfg: DictConfig):
             queries_pool = [s for s in dataset["icl_test"] if s["operation"] == "query"]
 
         out_file = f"{cfg.output_dir}/{split}_{cfg.n_shot}shot.jsonl"
-        process_and_save(docs_pool, queries_pool, dataset[split], out_file, cfg.n_shot, dict(cfg.type_ratios))
+        process_and_save(
+            docs_pool,
+            queries_pool,
+            dataset[split],
+            out_file,
+            cfg.n_shot,
+            dict(cfg.type_ratios),
+        )
 
     print("\nConversion complete for all ICL patterns.")
 

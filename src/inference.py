@@ -21,7 +21,7 @@ from .inference_utils import (
 )
 from .metrics import GRMetrics
 
-
+os.environ.setdefault("CUDA_VISIBLE_DEVICES", "0")
 os.environ.setdefault("NCCL_P2P_DISABLE", "1")
 os.environ.setdefault("NCCL_IB_DISABLE", "1")
 
@@ -272,10 +272,10 @@ class DecoderInference:
                 recall_at_10 += 1.0 if rank <= 10 else 0.0
                 mrr_at_10 += 1.0 / rank if rank <= 10 else 0.0
 
-                current_hit_1 = hit_at_1 / (idx+1)
-                current_hit_10 = hit_at_10 / (idx+1)
-                current_recall_at_10 = recall_at_10 / (idx+1)
-                current_mrr_at_10 = mrr_at_10 / (idx+1)
+                current_hit_1 = hit_at_1 / (idx + 1)
+                current_hit_10 = hit_at_10 / (idx + 1)
+                current_recall_at_10 = recall_at_10 / (idx + 1)
+                current_mrr_at_10 = mrr_at_10 / (idx + 1)
 
                 pbar.set_postfix(
                     {

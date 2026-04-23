@@ -153,16 +153,9 @@ class DecoderInference:
         )
 
     @torch.no_grad()
-    def generate_docid(self, text: str, context: Optional[List[str]] = None) -> List[str]:
-        """Generate document ID(s) for a single text query."""
-        return self.generate_docid_batch([text], context_list=[context] if context else None)[0]
-
-    @torch.no_grad()
-    def generate_docid_batch(
-        self,
-        texts: List[str],
-        context_list: Optional[List[Optional[List[str]]]] = None,
-    ) -> List[List[str]]:
+    def generate_docid(
+        self, text: str, context: Optional[List[str]] = None
+    ) -> List[str] | str:
         """
         Generate document IDs for a batch of queries.
 
@@ -171,57 +164,23 @@ class DecoderInference:
             context_list: Optional per-query context lists (same length as texts).
 
         Returns:
-            List of length len(texts), each element is a list of predicted docids.
+            Generated document ID(s) as string or list of strings.
+            For semantic docids, returns format like "<|d0_253|> <|d1_56|> <|d2_174|>"
         """
-        inputs_strs = []
-        for i, text in enumerate(texts):
-            ctx = context_list[i] if context_list else None
-            if ctx:
-                context_str = " ".join(ctx)
-                user_content = f"[CTX_SEARCH] Context: {context_str} Query: {text} -> Target:"
-            else:
-                user_content = f"[MEM_SEARCH] Query: {text} -> Target:"
-            inputs_strs.append(
-                f"<|im_start|>user\n{user_content}<|im_end|>\n<|im_start|>assistant\n"
+        if context:
+            context_str = " ".join(context)
+            user_content = (
+                f"[CTX_SEARCH] Context: {context_str} Query: {text} -> Target:"
             )
+        else:
+            user_content = f"[MEM_SEARCH] Query: {text} -> Target:"
 
-        # Left-padding ensures all sequences share the same prompt_length after padding
-        encoding = self.tokenizer(
-            inputs_strs,
-            return_tensors="pt",
-            padding=True,
-            add_special_tokens=False,
-        ).to(self.device)
-        prompt_length = encoding["input_ids"].shape[1]
-
-        logits_processor = self._create_logits_processor(prompt_length)
-        outputs = self.model.generate(
-            **encoding,
-            generation_config=self.generation_config,
-            logits_processor=logits_processor,
+        inputs_str = (
+            f"<|im_start|>user\n{user_content}<|im_end|>\n<|im_start|>assistant\n"
         )
-
-        # outputs: (batch * num_return_sequences, seq_len)
-        num_ret = self.generation_config.num_return_sequences
-        generated_ids = outputs[:, prompt_length:]
-        decoded = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=False)
-
-        results = []
-        for i in range(len(texts)):
-            sample_responses = decoded[i * num_ret : (i + 1) * num_ret]
-            results.append([self._clean_docid(r) for r in sample_responses])
-        return results
-
-    @torch.no_grad()
-    def _generate_from_prompts(self, prompts: List[str]) -> List[List[str]]:
-        """Run generation on already-formatted prompt strings."""
-        encoding = self.tokenizer(
-            prompts,
-            return_tensors="pt",
-            padding=True,
-            add_special_tokens=False,
-        ).to(self.device)
-        prompt_length = encoding["input_ids"].shape[1]
+        inputs = self.tokenizer.encode(inputs_str, return_tensors="pt").to(self.device)
+        # Create logits processor with the actual prompt length for this input
+        prompt_length = inputs.shape[1]
 
         logits_processor = self._create_logits_processor(prompt_length)
         outputs = self.model.generate(
@@ -328,12 +287,10 @@ class DecoderInference:
                     )
                     true_docids.append(self._clean_docid(item["conversations"][1]["content"]))
 
-            batch_predicted = self._generate_from_prompts(prompts)
-
-            for item, text, true_docid, predicted_docids in zip(
-                batch, prompts, true_docids, batch_predicted
-            ):
-                logger.debug(f"Predicted_docids: {predicted_docids}, True_docid: {true_docid}")
+            predicted_docids = self.generate_docid(text)
+            logger.debug(
+                f"Predicted_docids: {predicted_docids}, True_docid: {true_docid}"
+            )
 
                 true_docid_normalized = str(true_docid).strip()
                 predicted_docids_normalized = [str(p).strip() for p in predicted_docids]
