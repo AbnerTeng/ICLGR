@@ -1,0 +1,10 @@
+model_path: "placeholder"
+train_file: "./data/msmarco-docquery-100k-3shot_v3_noise_heavy/train_3shot.jsonl"
+new_file: "./data/msmarco-docquery-100k-3shot_v3_noise_heavy/icl_test_3shot.jsonl"
+num_beams: 10
+num_return: 10
+max_new_tokens: 50
+no_trie: false
+mode: "file"
+query_file: "./data/msmarco-docquery-100k-3shot_v3_noise_heavy/test_3shot.jsonl"
+max_samples: 50

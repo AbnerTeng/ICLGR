@@ -1,4 +1,3 @@
-
 """
 Generate training data in 4 positional / noise formats with ratio 1:1:8:8.
 

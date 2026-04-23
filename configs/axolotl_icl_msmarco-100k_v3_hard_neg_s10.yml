@@ -1,7 +1,7 @@
 base_model: Abner0803/Qwen3-1.7B-msmarco-text-100k-with_pseudo_queries
 
 datasets:
-  - path: /semantic-search-pvc/users/lala/ICLGR_project/ICLGR/data/msmarco-docquery-100k-3shot_position_template_v3_0.5_0.5_1_1/train_3shot.jsonl
+  - path: /semantic-search-pvc/users/lala/ICLGR_local/data/msmarco-docquery-100k-3shot_v3_hard_neg_s10/train_3shot.jsonl
     type: chat_template
     chat_template: tokenizer_default_fallback_chatml
     field_messages: conversations
@@ -22,28 +22,24 @@ datasets:
 roles_to_train: ["assistant"]
 train_on_eos: "turn"
 
-# streaming: true
-# streaming_multipack_buffer_size: 10000
 shuffle_merged_datasets: true
-output_dir: ./checkpoint/Qwen3-1.7B-icl-3shot-position-template-v3-1e-4-12epochs_v2
+output_dir: ./checkpoint/Qwen3-1.7B-icl-3shot-v3-hard-neg-s10-5e-5
 sequence_len: 2048
-sample_packing: true 
-pad_to_sequence_len: true  
-flash_attention: true 
+sample_packing: true
+pad_to_sequence_len: true
+flash_attention: true
 xformers_attention: false
 flex_attention: false
-sdp_attention: false 
-# overrides_of_model_config:
-#   _attn_implementation: "sdpa"
+sdp_attention: false
 
 gradient_accumulation_steps: 8
 micro_batch_size: 8
 dataloader_num_workers: 6
-num_epochs: 12
+num_epochs: 2
 
 optimizer: adamw_torch
 lr_scheduler: cosine
-learning_rate: 1e-4
+learning_rate: 5e-5
 warmup_ratio: 0.1
 weight_decay: 0.0
 bf16: true
@@ -52,12 +48,12 @@ gradient_checkpointing: true
 
 logging_steps: 50
 save_strategy: epoch
-save_total_limit: 5
+save_total_limit: 2
 
 wandb_project: "ICLGR"
 wandb_entity: "lala83"
 wandb_watch: "gradients"
-wandb_name: "qwen-1.7b-icl-3shot-position-template-v3-1e-4-12epochs_v2"
+wandb_name: "qwen-1.7b-icl-3shot-v3-hard-neg-s10-5e-5"
 wandb_log_model: "checkpoint"
 
 val_set_size: 0.0

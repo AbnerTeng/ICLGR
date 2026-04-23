@@ -45,3 +45,16 @@ do_smt.ipynb
 stage1_icl_test*.jsonl
 stage1_test*.jsonl
 instruction.md
+sync.sh
+train_v3_v4.sh
+*.html
+cslcli.conf
+.ipynb_checkpoints
+count_metadata_pattern.ipynb
+hf_upload.py
+configs/lookup_identifier_conf.yaml
+src/lookup_identifier.py
+src/check_coverage.py
+src/download_hf_dataset.py
+src/compare_datasets.py
+src/analyze_pseudo_queries.py

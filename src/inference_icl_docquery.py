@@ -1,7 +1,9 @@
 import os
+import re
 import json
 import logging
 from pathlib import Path
+from collections import defaultdict
 from typing import Any, Dict, List, Optional
 
 import hydra
@@ -18,7 +20,6 @@ from transformers import (
 
 from .inference_utils import (
     TrieNode,
-    build_semantic_docid_trie,
     TrieConstrainedLogitsProcessor,
 )
 from .metrics import GRMetrics
@@ -31,22 +32,67 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     handlers=[
-        logging.FileHandler("stage-1_decoder_inference_title.log"),
+        logging.FileHandler("inference_icl_docquery.log"),
         logging.StreamHandler(),
     ],
 )
 logger = logging.getLogger(__name__)
 
 
-class DecoderInference:
+def build_docquery_trie(data_paths: List[str], tokenizer) -> TrieNode:
+    """Build trie from conversations-format data (docquery / ICL).
+
+    Collects all unique generation targets so the trie covers both
+    bare identifiers (zero-shot) and ``[COPY] <id>`` (doc-position) patterns.
     """
-    Inference class for decoder-only models trained on docid generation task.
+    root = TrieNode()
 
-    Supports semantic docid tokens:
-    - Semantic: "<|d0_253|> <|d1_56|> <|d2_174|>"
+    if isinstance(data_paths, str):
+        data_paths = [data_paths]
 
-    For semantic docids, the model must be trained with semantic tokens
-    added as special tokens (see config/axolotl_semantic_docids.yml).
+    docid_set: set = set()
+
+    for path in data_paths:
+        with open(path, "r") as f:
+            for line in f:
+                item = json.loads(line)
+
+                if item.get("operation") == "indexing":
+                    docid_set.add(item["doc_id"])
+                elif item.get("conversations"):
+                    assistant_content = item["conversations"][1]["content"]
+                    docid_set.add(assistant_content)
+                    target_id = item.get("metadata", {}).get("target_id")
+                    if target_id:
+                        docid_set.add(target_id)
+                        docid_set.add(f"[COPY] {target_id}")
+
+    logger.info(f"Building trie from {len(docid_set)} unique targets")
+
+    for doc_id_str in docid_set:
+        token_ids = tokenizer.encode(doc_id_str, add_special_tokens=False)
+        node = root
+        for token_id in token_ids:
+            if token_id not in node.children:
+                node.children[token_id] = TrieNode()
+            node = node.children[token_id]
+        node.end_of_docid = True
+
+    return root
+
+
+class DocQueryInference:
+    """Inference for models trained on the docquery / ICL conversation format.
+
+    Expected data schema (JSONL)::
+
+        {
+          "conversations": [
+            {"role": "user",      "content": "## Documents ...\\n## Task\\nQuery: ...\\nAnswer:"},
+            {"role": "assistant", "content": "[COPY] Some Document Title"}
+          ],
+          "metadata": {"pattern": "doc_pos_back", "target_id": "Some Document Title"}
+        }
     """
 
     def __init__(
@@ -67,7 +113,7 @@ class DecoderInference:
         self.new_data_path = new_data_path
         self.device = self._setup_device()
 
-        logger.info("Initializing Decoder Inference...")
+        logger.info("Initializing DocQuery Inference...")
         logger.info(f"Loading model from: {self.model_path}")
         logger.info(f"Using device: {self.device}")
 
@@ -79,21 +125,14 @@ class DecoderInference:
         logger.info("Model loaded successfully!")
 
     def _setup_device(self) -> torch.device:
-        """Setup the computation device."""
         return torch.device("cuda")
 
     def _load_tokenizer(self) -> AutoTokenizer:
-        """Load the tokenizer with special semantic tokens if present."""
         try:
             tokenizer = AutoTokenizer.from_pretrained(
                 self.model_path, padding_side="left", trust_remote_code=True
             )
             logger.info(f"Loaded tokenizer from {self.model_path}")
-
-            if any(token.startswith("<|d") for token in tokenizer.get_vocab().keys()):
-                logger.info("Detected semantic docid tokens in vocabulary")
-                logger.info(f"Vocabulary size: {len(tokenizer)}")
-
         except Exception as e:
             logger.warning(f"Loading tokenizer from base Qwen model due to: {e}")
             tokenizer = AutoTokenizer.from_pretrained(
@@ -106,7 +145,6 @@ class DecoderInference:
         return tokenizer
 
     def _load_model(self) -> AutoModelForCausalLM:
-        """Load the trained model."""
         model = AutoModelForCausalLM.from_pretrained(
             self.model_path,
             torch_dtype=(
@@ -115,34 +153,24 @@ class DecoderInference:
             device_map={"": self.device} if self.device.type == "cuda" else None,
         )
         model.eval()
-
         return model
 
     def _build_trie(self) -> TrieNode:
-        """Build the trie from training data."""
-        logger.info("Building semantic docid trie...")
+        logger.info("Building docquery trie...")
 
         files = [self.train_data_path]
-
         if self.new_data_path:
             files.append(self.new_data_path)
 
-        trie_root = build_semantic_docid_trie(
-            files,
-            self.tokenizer,
-        )
-
-        return trie_root
+        return build_docquery_trie(files, self.tokenizer)
 
     def _create_logits_processor(self, prompt_length: int) -> LogitsProcessorList:
-        """Create a logits processor with specific prompt length for the current batch."""
         processor = TrieConstrainedLogitsProcessor(
             self.trie_root, prompt_length, self.tokenizer.eos_token_id
         )
         return LogitsProcessorList([processor])
 
     def _setup_generation_config(self) -> GenerationConfig:
-        """Setup generation configuration for docid generation."""
         return GenerationConfig(
             max_new_tokens=50,
             do_sample=False,
@@ -152,65 +180,16 @@ class DecoderInference:
             num_return_sequences=10,
         )
 
-    @torch.no_grad()
-    def generate_docid(self, text: str, context: Optional[List[str]] = None) -> List[str]:
-        """Generate document ID(s) for a single text query."""
-        return self.generate_docid_batch([text], context_list=[context] if context else None)[0]
+    # ------------------------------------------------------------------
+    # Generation
+    # ------------------------------------------------------------------
 
     @torch.no_grad()
-    def generate_docid_batch(
-        self,
-        texts: List[str],
-        context_list: Optional[List[Optional[List[str]]]] = None,
-    ) -> List[List[str]]:
-        """
-        Generate document IDs for a batch of queries.
-
-        Args:
-            texts: List of query texts.
-            context_list: Optional per-query context lists (same length as texts).
-
-        Returns:
-            List of length len(texts), each element is a list of predicted docids.
-        """
-        inputs_strs = []
-        for i, text in enumerate(texts):
-            ctx = context_list[i] if context_list else None
-            if ctx:
-                context_str = " ".join(ctx)
-                user_content = f"[CTX_SEARCH] Context: {context_str} Query: {text} -> Target:"
-            else:
-                user_content = f"[MEM_SEARCH] Query: {text} -> Target:"
-            inputs_strs.append(
-                f"<|im_start|>user\n{user_content}<|im_end|>\n<|im_start|>assistant\n"
-            )
-
-        # Left-padding ensures all sequences share the same prompt_length after padding
-        encoding = self.tokenizer(
-            inputs_strs,
-            return_tensors="pt",
-            padding=True,
-            add_special_tokens=False,
-        ).to(self.device)
-        prompt_length = encoding["input_ids"].shape[1]
-
-        logits_processor = self._create_logits_processor(prompt_length)
-        outputs = self.model.generate(
-            **encoding,
-            generation_config=self.generation_config,
-            logits_processor=logits_processor,
-        )
-
-        # outputs: (batch * num_return_sequences, seq_len)
-        num_ret = self.generation_config.num_return_sequences
-        generated_ids = outputs[:, prompt_length:]
-        decoded = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=False)
-
-        results = []
-        for i in range(len(texts)):
-            sample_responses = decoded[i * num_ret : (i + 1) * num_ret]
-            results.append([self._clean_docid(r) for r in sample_responses])
-        return results
+    def generate_docid(self, text: str) -> List[str]:
+        """Generate document ID(s) for a single user content string."""
+        return self._generate_from_prompts(
+            [f"<|im_start|>user\n{text}<|im_end|>\n<|im_start|>assistant\n"]
+        )[0]
 
     @torch.no_grad()
     def _generate_from_prompts(self, prompts: List[str]) -> List[List[str]]:
@@ -240,28 +219,20 @@ class DecoderInference:
             results.append([self._clean_docid(r) for r in sample_responses])
         return results
 
-    def _clean_docid(self, docid: str) -> str:
-        """
-        Clean the generated docid string to extract only semantic tokens.
+    # ------------------------------------------------------------------
+    # Cleaning
+    # ------------------------------------------------------------------
 
-        For semantic docids: extracts and preserves only <|dX_Y|> tokens
-        For numeric docids: removes <| and |> delimiters
-
-        Args:
-            docid: Raw docid string from model
-
-        Returns:
-            Cleaned docid string containing only semantic tokens
-        """
-        import re
-
+    @staticmethod
+    def _clean_docid(docid: str) -> str:
+        """Strip special tokens and ``[COPY]`` prefix from a generated string."""
         docid = docid.strip()
         docid = docid.replace("</s>", "").replace("<|endoftext|>", "")
         docid = docid.replace("<|im_end|>", "").replace("<|im_start|>", "")
 
         if "<think>" in docid:
             match = re.search(
-                r"</think>\s*(.*?)(?:<|im_end|>|</s>|$)", docid, re.DOTALL
+                r"</think>\s*(.*?)(?:<\|im_end\|>|</s>|$)", docid, re.DOTALL
             )
             if match:
                 docid = match.group(1).strip()
@@ -270,10 +241,17 @@ class DecoderInference:
             semantic_tokens = re.findall(r"<\|d\d+_\d+\|>", docid)
             if semantic_tokens:
                 return " ".join(semantic_tokens)
-            else:
-                return docid.strip()
-        else:
-            return docid.replace("<|", "").replace("|>", "").strip()
+            return docid.strip()
+
+        docid = docid.strip()
+        if docid.startswith("[COPY]"):
+            docid = docid[len("[COPY]"):].strip()
+
+        return docid
+
+    # ------------------------------------------------------------------
+    # Evaluation
+    # ------------------------------------------------------------------
 
     def evaluate_on_test_set(
         self,
@@ -281,17 +259,6 @@ class DecoderInference:
         max_samples: Optional[int] = None,
         batch_size: int = 8,
     ) -> Dict[str, Any]:
-        """
-        Evaluate the model on a test set and compute accuracy.
-
-        Args:
-            test_file: Path to test JSON file
-            max_samples: Maximum number of samples to evaluate (None for all)
-            batch_size: Number of samples to process in one forward pass
-
-        Returns:
-            Dictionary with evaluation results
-        """
         logger.info(f"Loading test data from: {test_file}")
 
         with open(test_file, "r") as f:
@@ -305,9 +272,7 @@ class DecoderInference:
         hit_at_1 = 0
         hit_at_10 = 0
         total = len(test_data)
-        predictions = []
-
-        from collections import defaultdict
+        predictions: List[Dict[str, Any]] = []
         pattern_hits = defaultdict(lambda: {"hit_at_1": 0, "hit_at_10": 0, "total": 0})
 
         pbar = tqdm(range(0, total, batch_size), desc="Evaluating")
@@ -326,14 +291,22 @@ class DecoderInference:
                     prompts.append(
                         f"<|im_start|>user\n{item['conversations'][0]['content']}<|im_end|>\n<|im_start|>assistant\n"
                     )
-                    true_docids.append(self._clean_docid(item["conversations"][1]["content"]))
+                    target_id = item.get("metadata", {}).get("target_id")
+                    if target_id:
+                        true_docids.append(target_id)
+                    else:
+                        true_docids.append(
+                            self._clean_docid(item["conversations"][1]["content"])
+                        )
 
             batch_predicted = self._generate_from_prompts(prompts)
 
             for item, text, true_docid, predicted_docids in zip(
                 batch, prompts, true_docids, batch_predicted
             ):
-                logger.debug(f"Predicted_docids: {predicted_docids}, True_docid: {true_docid}")
+                logger.debug(
+                    f"Predicted_docids: {predicted_docids}, True_docid: {true_docid}"
+                )
 
                 true_docid_normalized = str(true_docid).strip()
                 predicted_docids_normalized = [str(p).strip() for p in predicted_docids]
@@ -412,7 +385,7 @@ def main(cfg: DictConfig) -> int:
     max_samples = cfg.max_samples if cfg.max_samples > 0 else None
     output_file = os.path.expanduser(cfg.output_file)
 
-    inference = DecoderInference(
+    inference = DocQueryInference(
         model_path=os.path.expanduser(cfg.model_path),
         from_hf=cfg.from_hf,
         train_data_path=os.path.expanduser(cfg.train_file),

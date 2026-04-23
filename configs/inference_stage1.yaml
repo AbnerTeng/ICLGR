@@ -1,0 +1,12 @@
+model_path: "Abner0803/Qwen3-1.7B-msmarco-text-100k-with_pseudo_queries"
+train_file: "./data/msmarco-ICL-100k-text-docid/train.jsonl"
+new_file: "./data/msmarco-ICL-100k-text-docid/icl_test.jsonl"
+num_beams: 10
+num_return: 10
+max_new_tokens: 50
+no_trie: false
+mode: "file"
+query_file: "./data/msmarco-ICL-100k-text-docid/test.jsonl"
+max_samples: 50
+
+# CUDA_VISIBLE_DEVICES=2 python -m src.cli_docquery --config-name inference_stage1

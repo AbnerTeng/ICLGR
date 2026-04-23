@@ -1,7 +1,7 @@
 input_path: "./data/msmarco/"
 dataset_name: "msmarco"
 n_shot: 3
-output_dir: "./data/msmarco-docquery-100k-3shot_position"
+output_dir: "./data/msmarco-docquery-100k-instruct"
 
 type_ratios:
   doc_pos_front: 0.125   # 1/8

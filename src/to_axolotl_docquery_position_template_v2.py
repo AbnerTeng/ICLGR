@@ -268,7 +268,7 @@ def process_and_save(
 
 # ── Entry point ───────────────────────────────────────────────────────────
 
-@hydra.main(config_path="../configs", config_name="get_docquery_position_template_v2", version_base=None)
+@hydra.main(config_path="../configs", config_name="get_docquery_instruct", version_base=None)
 def main(cfg: DictConfig):
     dataset = load_dataset(
         "json",

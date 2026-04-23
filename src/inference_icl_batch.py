@@ -2,12 +2,13 @@ import os
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import hydra
 from omegaconf import DictConfig
 
 import torch
+import torch.multiprocessing as mp
 from tqdm import tqdm
 from transformers import (
     AutoTokenizer,
@@ -41,13 +42,10 @@ logger = logging.getLogger(__name__)
 class DecoderInference:
     """
     Inference class for decoder-only models trained on docid generation task.
-    Supports batched inference for improved GPU utilization.
+    Supports batched inference and multi-GPU data parallelism.
 
     Supports semantic docid tokens:
     - Semantic: "<|d0_253|> <|d1_56|> <|d2_174|>"
-
-    For semantic docids, the model must be trained with semantic tokens
-    added as special tokens (see config/axolotl_semantic_docids.yml).
     """
 
     def __init__(
@@ -57,6 +55,7 @@ class DecoderInference:
         train_data_path: str,
         new_data_path: str,
         base_model_path: Optional[str] = None,
+        gpu_id: Optional[int] = None,
     ) -> None:
         if from_hf:
             self.model_path = model_path
@@ -66,37 +65,32 @@ class DecoderInference:
         self.base_model_path = base_model_path
         self.train_data_path = train_data_path
         self.new_data_path = new_data_path
+        self.gpu_id = gpu_id
         self.device = self._setup_device()
 
-        logger.info("Initializing Decoder Inference...")
-        logger.info(f"Loading model from: {self.model_path}")
-        logger.info(f"Using device: {self.device}")
+        logger.info(f"[GPU {gpu_id}] Initializing Decoder Inference on {self.device}")
 
         self.tokenizer = self._load_tokenizer()
         self.model = self._load_model()
         self.trie_root = self._build_trie()
         self.generation_config = self._setup_generation_config()
 
-        logger.info("Model loaded successfully!")
+        logger.info(f"[GPU {gpu_id}] Model loaded successfully!")
 
     def _setup_device(self) -> torch.device:
-        """Setup the computation device."""
+        if self.gpu_id is not None:
+            return torch.device(f"cuda:{self.gpu_id}")
         return torch.device("cuda")
 
     def _load_tokenizer(self) -> AutoTokenizer:
-        """Load the tokenizer with special semantic tokens if present."""
         try:
             tokenizer = AutoTokenizer.from_pretrained(
                 self.model_path, padding_side="left", trust_remote_code=True
             )
-            logger.info(f"Loaded tokenizer from {self.model_path}")
-
             if any(token.startswith("<|d") for token in tokenizer.get_vocab().keys()):
-                logger.info("Detected semantic docid tokens in vocabulary")
-                logger.info(f"Vocabulary size: {len(tokenizer)}")
-
+                logger.info(f"[GPU {self.gpu_id}] Detected semantic docid tokens, vocab size: {len(tokenizer)}")
         except Exception as e:
-            logger.warning(f"Loading tokenizer from base Qwen model due to: {e}")
+            logger.warning(f"[GPU {self.gpu_id}] Falling back to base tokenizer: {e}")
             tokenizer = AutoTokenizer.from_pretrained(
                 "Qwen/Qwen3-1.7B", padding_side="left", trust_remote_code=True
             )
@@ -107,43 +101,44 @@ class DecoderInference:
         return tokenizer
 
     def _load_model(self) -> AutoModelForCausalLM:
-        """Load the trained model."""
-        model = AutoModelForCausalLM.from_pretrained(
-            self.model_path,
-            torch_dtype=(
-                torch.float16 if self.device.type == "cuda" else torch.float32
-            ),
-            device_map="auto" if self.device.type == "cuda" else None,
-        )
+        load_kwargs: Dict[str, Any] = {
+            "torch_dtype": torch.float16,
+            # Pin each model to its own GPU; no inter-GPU tensor sharding.
+            "device_map": {"": self.device},
+        }
+
+        try:
+            load_kwargs["attn_implementation"] = "flash_attention_2"
+            model = AutoModelForCausalLM.from_pretrained(self.model_path, **load_kwargs)
+            logger.info(f"[GPU {self.gpu_id}] Loaded with Flash Attention 2")
+        except Exception:
+            load_kwargs.pop("attn_implementation")
+            model = AutoModelForCausalLM.from_pretrained(self.model_path, **load_kwargs)
+            logger.info(f"[GPU {self.gpu_id}] Flash Attention 2 unavailable, using default")
+
         model.eval()
+
+        try:
+            model = torch.compile(model, mode="reduce-overhead")
+            logger.info(f"[GPU {self.gpu_id}] torch.compile applied")
+        except Exception as e:
+            logger.warning(f"[GPU {self.gpu_id}] torch.compile skipped: {e}")
 
         return model
 
     def _build_trie(self) -> TrieNode:
-        """Build the trie from training data."""
-        logger.info("Building semantic docid trie...")
-
         files = [self.train_data_path]
-
         if self.new_data_path:
             files.append(self.new_data_path)
-
-        trie_root = build_semantic_docid_trie(
-            files,
-            self.tokenizer,
-        )
-
-        return trie_root
+        return build_semantic_docid_trie(files, self.tokenizer)
 
     def _create_logits_processor(self, prompt_length: int) -> LogitsProcessorList:
-        """Create a logits processor with specific prompt length for the current batch."""
         processor = TrieConstrainedLogitsProcessor(
             self.trie_root, prompt_length, self.tokenizer.eos_token_id
         )
         return LogitsProcessorList([processor])
 
     def _setup_generation_config(self) -> GenerationConfig:
-        """Setup generation configuration for docid generation."""
         return GenerationConfig(
             max_new_tokens=50,
             do_sample=False,
@@ -167,17 +162,6 @@ class DecoderInference:
         texts: List[str],
         contexts: Optional[List[Optional[List[str]]]] = None,
     ) -> List[List[str]]:
-        """
-        Generate document IDs for a batch of queries.
-
-        Args:
-            texts: List of query texts.
-            contexts: Optional list of context lists, one per query.
-                      If None, all queries use [MEM_SEARCH].
-
-        Returns:
-            List of lists: for each query, num_return_sequences predicted docids.
-        """
         if contexts is None:
             contexts = [None] * len(texts)
 
@@ -189,8 +173,6 @@ class DecoderInference:
             padding=True,
         ).to(self.device)
 
-        # With left-padding all sequences share the same padded prompt_length,
-        # so TrieConstrainedLogitsProcessor can use a single prompt_length value.
         prompt_length = encoded["input_ids"].shape[1]
         logits_processor = self._create_logits_processor(prompt_length)
 
@@ -200,7 +182,6 @@ class DecoderInference:
             logits_processor=logits_processor,
         )
 
-        # outputs: (batch_size * num_return_sequences, seq_len)
         num_seqs = self.generation_config.num_return_sequences
         results = []
         for i in range(len(texts)):
@@ -213,22 +194,9 @@ class DecoderInference:
 
     @torch.no_grad()
     def generate_docid(self, text: str, context: Optional[List[str]] = None) -> List[str]:
-        """Generate document IDs for a single query (wraps generate_docids_batch)."""
         return self.generate_docids_batch([text], [context])[0]
 
     def _clean_docid(self, docid: str) -> str:
-        """
-        Clean the generated docid string to extract only semantic tokens.
-
-        For semantic docids: extracts and preserves only <|dX_Y|> tokens
-        For numeric docids: removes <| and |> delimiters
-
-        Args:
-            docid: Raw docid string from model
-
-        Returns:
-            Cleaned docid string containing only semantic tokens
-        """
         import re
 
         docid = docid.strip()
@@ -236,58 +204,37 @@ class DecoderInference:
         docid = docid.replace("<|im_end|>", "").replace("<|im_start|>", "")
 
         if "<think>" in docid:
-            match = re.search(
-                r"</think>\s*(.*?)(?:<|im_end|>|</s>|$)", docid, re.DOTALL
-            )
+            match = re.search(r"</think>\s*(.*?)(?:<|im_end|>|</s>|$)", docid, re.DOTALL)
             if match:
                 docid = match.group(1).strip()
 
         if "<|d" in docid:
             semantic_tokens = re.findall(r"<\|d\d+_\d+\|>", docid)
-            if semantic_tokens:
-                return " ".join(semantic_tokens)
-            else:
-                return docid.strip()
+            return " ".join(semantic_tokens) if semantic_tokens else docid.strip()
         else:
             return docid.replace("<|", "").replace("|>", "").strip()
 
-    def evaluate_on_test_set(
-        self,
-        test_file: str,
-        max_samples: Optional[int] = None,
-        batch_size: int = 8,
-    ) -> Dict[str, Any]:
-        """
-        Evaluate the model on a test set and compute accuracy.
+    def _evaluate_data(
+        self, data: List[Dict], batch_size: int
+    ) -> Tuple[int, int, List[Dict]]:
+        """Process a pre-loaded list of samples. Returns (hit1, hit10, predictions)."""
+        def _item_text(item):
+            return item["conversations"][0]["content"] if item.get("conversations") else item["text"]
 
-        Args:
-            test_file: Path to test JSON file
-            max_samples: Maximum number of samples to evaluate (None for all)
-            batch_size: Number of queries to process in parallel
+        order = sorted(range(len(data)), key=lambda i: len(_item_text(data[i])))
+        data_sorted = [data[i] for i in order]
 
-        Returns:
-            Dictionary with evaluation results
-        """
-        logger.info(f"Loading test data from: {test_file}")
+        hit_at_1 = hit_at_10 = 0
+        predictions_sorted = []
 
-        with open(test_file, "r") as f:
-            test_data = [json.loads(line) for line in f]
-
-        if max_samples:
-            test_data = test_data[:max_samples]
-
-        logger.info(f"Evaluating on {len(test_data)} samples (batch_size={batch_size})...")
-
-        hit_at_1 = 0
-        hit_at_10 = 0
-        total = len(test_data)
-        predictions = []
-
-        pbar = tqdm(range(0, total, batch_size), desc="Evaluating")
-
+        pbar = tqdm(
+            range(0, len(data), batch_size),
+            desc=f"GPU {self.gpu_id}",
+            position=self.gpu_id or 0,
+            leave=True,
+        )
         for batch_start in pbar:
-            batch = test_data[batch_start : batch_start + batch_size]
-
+            batch = data_sorted[batch_start : batch_start + batch_size]
             texts, true_docids = [], []
             for item in batch:
                 if item.get("conversations") is None:
@@ -302,82 +249,210 @@ class DecoderInference:
             for item, text, true_docid, predicted_docids in zip(
                 batch, texts, true_docids, batch_predicted
             ):
-                logger.debug(f"Predicted: {predicted_docids}, True: {true_docid}")
-
-                true_docid_normalized = str(true_docid).strip()
-                predicted_docids_normalized = [str(p).strip() for p in predicted_docids]
-
-                is_hit_1 = true_docid_normalized == predicted_docids_normalized[0]
-                is_hit_10 = true_docid_normalized in predicted_docids_normalized
-
+                true_norm = str(true_docid).strip()
+                pred_norm = [str(p).strip() for p in predicted_docids]
+                is_hit_1 = true_norm == pred_norm[0]
+                is_hit_10 = true_norm in pred_norm
                 if is_hit_1:
                     hit_at_1 += 1
                 if is_hit_10:
                     hit_at_10 += 1
+                predictions_sorted.append({
+                    "text": text,
+                    "true_docid": true_docid,
+                    "predicted_docid": predicted_docids,
+                    "hit_at_1": is_hit_1,
+                    "hit_at_10": is_hit_10,
+                    "metadata": item.get("metadata"),
+                })
 
-                predictions.append(
-                    {
-                        "text": text,
-                        "true_docid": true_docid,
-                        "predicted_docid": predicted_docids,
-                        "hit_at_1": is_hit_1,
-                        "hit_at_10": is_hit_10,
-                        "metadata": item.get("metadata"),
-                    }
-                )
+            done = min(batch_start + batch_size, len(data))
+            pbar.set_postfix({
+                "Hit@1": f"{hit_at_1/done:.4f}",
+                "Hit@10": f"{hit_at_10/done:.4f}",
+            })
 
-            done = min(batch_start + batch_size, total)
-            pbar.set_postfix(
-                {
-                    "Hit@1": f"{hit_at_1 / done:.4f}",
-                    "Hit@10": f"{hit_at_10 / done:.4f}",
-                }
-            )
+        # Restore sorted order
+        predictions = [None] * len(data)
+        for sorted_idx, orig_idx in enumerate(order):
+            predictions[orig_idx] = predictions_sorted[sorted_idx]
 
-        hit_at_1_score = hit_at_1 / total
-        hit_at_10_score = hit_at_10 / total
+        return hit_at_1, hit_at_10, predictions
+
+    def evaluate_on_test_set(
+        self,
+        test_file: str,
+        max_samples: Optional[int] = None,
+        batch_size: int = 8,
+    ) -> Dict[str, Any]:
+        logger.info(f"Loading test data from: {test_file}")
+        with open(test_file, "r") as f:
+            test_data = [json.loads(line) for line in f]
+        if max_samples:
+            test_data = test_data[:max_samples]
+
+        logger.info(f"Evaluating on {len(test_data)} samples (batch_size={batch_size})...")
+        hit_at_1, hit_at_10, predictions = self._evaluate_data(test_data, batch_size)
+        total = len(test_data)
 
         results = {
-            "hit_at_1": hit_at_1_score,
-            "hit_at_10": hit_at_10_score,
+            "hit_at_1": hit_at_1 / total,
+            "hit_at_10": hit_at_10 / total,
             "hit_at_1_count": hit_at_1,
             "hit_at_10_count": hit_at_10,
             "total": total,
             "predictions": predictions,
         }
-
-        logger.info(f"Hit@1: {hit_at_1_score:.4f} ({hit_at_1}/{total})")
-        logger.info(f"Hit@10: {hit_at_10_score:.4f} ({hit_at_10}/{total})")
-
+        logger.info(f"Hit@1: {results['hit_at_1']:.4f} ({hit_at_1}/{total})")
+        logger.info(f"Hit@10: {results['hit_at_10']:.4f} ({hit_at_10}/{total})")
         return results
 
 
-@hydra.main(config_path="../configs", config_name="inference_conf", version_base=None)
+# ---------------------------------------------------------------------------
+# Multi-GPU worker (must be top-level for pickle)
+# ---------------------------------------------------------------------------
+
+def _mp_worker(
+    gpu_id: int,
+    model_path: str,
+    from_hf: bool,
+    train_data_path: str,
+    new_data_path: str,
+    data_chunk: List[Dict],
+    batch_size: int,
+    return_dict,
+) -> None:
+    """Spawned per-GPU worker: loads its own model copy and processes data_chunk."""
+    inference = DecoderInference(
+        model_path=model_path,
+        from_hf=from_hf,
+        train_data_path=train_data_path,
+        new_data_path=new_data_path,
+        gpu_id=gpu_id,
+    )
+    hit1, hit10, preds = inference._evaluate_data(data_chunk, batch_size)
+    return_dict[gpu_id] = (hit1, hit10, preds)
+
+
+def evaluate_multi_gpu(
+    model_path: str,
+    from_hf: bool,
+    train_data_path: str,
+    new_data_path: str,
+    test_file: str,
+    max_samples: Optional[int],
+    batch_size: int,
+) -> Dict[str, Any]:
+    """Split test data across all available GPUs and run inference in parallel."""
+    with open(test_file, "r") as f:
+        test_data = [json.loads(line) for line in f]
+    if max_samples:
+        test_data = test_data[:max_samples]
+
+    n_gpus = torch.cuda.device_count()
+    logger.info(f"Running data-parallel inference on {n_gpus} GPUs, {len(test_data)} samples")
+
+    # Split data into n_gpus chunks, preserving original indices for reassembly
+    chunks = [[] for _ in range(n_gpus)]
+    chunk_indices = [[] for _ in range(n_gpus)]
+    for i, item in enumerate(test_data):
+        gpu = i % n_gpus
+        chunks[gpu].append(item)
+        chunk_indices[gpu].append(i)
+
+    ctx = mp.get_context("spawn")
+    manager = ctx.Manager()
+    return_dict = manager.dict()
+
+    processes = []
+    for gpu_id in range(n_gpus):
+        p = ctx.Process(
+            target=_mp_worker,
+            args=(
+                gpu_id,
+                model_path,
+                from_hf,
+                train_data_path,
+                new_data_path,
+                chunks[gpu_id],
+                batch_size,
+                return_dict,
+            ),
+        )
+        p.start()
+        processes.append(p)
+
+    for p in processes:
+        p.join()
+
+    # Reassemble results in original order
+    total = len(test_data)
+    predictions = [None] * total
+    hit_at_1 = hit_at_10 = 0
+
+    for gpu_id in range(n_gpus):
+        h1, h10, preds = return_dict[gpu_id]
+        hit_at_1 += h1
+        hit_at_10 += h10
+        for local_idx, orig_idx in enumerate(chunk_indices[gpu_id]):
+            predictions[orig_idx] = preds[local_idx]
+
+    results = {
+        "hit_at_1": hit_at_1 / total,
+        "hit_at_10": hit_at_10 / total,
+        "hit_at_1_count": hit_at_1,
+        "hit_at_10_count": hit_at_10,
+        "total": total,
+        "predictions": predictions,
+    }
+    logger.info(f"Hit@1: {results['hit_at_1']:.4f} ({hit_at_1}/{total})")
+    logger.info(f"Hit@10: {results['hit_at_10']:.4f} ({hit_at_10}/{total})")
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+@hydra.main(config_path="../configs", config_name="inference_batch_conf", version_base=None)
 def main(cfg: DictConfig) -> int:
     max_samples = cfg.max_samples if cfg.max_samples > 0 else None
     batch_size = cfg.get("batch_size", 8)
     output_file = os.path.expanduser(cfg.output_file)
 
-    inference = DecoderInference(
-        model_path=os.path.expanduser(cfg.model_path),
-        from_hf=cfg.from_hf,
-        train_data_path=os.path.expanduser(cfg.train_file),
-        new_data_path=os.path.expanduser(cfg.new_file) if cfg.new_file else "",
-        base_model_path=(
-            os.path.expanduser(cfg.base_model_path) if cfg.base_model_path else None
-        ),
-    )
-
     if not os.path.exists(output_file):
-        results = inference.evaluate_on_test_set(
-            os.path.expanduser(cfg.test_file), max_samples, batch_size
-        )
+        n_gpus = torch.cuda.device_count()
+        model_path = os.path.expanduser(cfg.model_path)
+        train_data_path = os.path.expanduser(cfg.train_file)
+        new_data_path = os.path.expanduser(cfg.new_file) if cfg.new_file else ""
+
+        if n_gpus > 1:
+            results = evaluate_multi_gpu(
+                model_path=model_path,
+                from_hf=cfg.from_hf,
+                train_data_path=train_data_path,
+                new_data_path=new_data_path,
+                test_file=os.path.expanduser(cfg.test_file),
+                max_samples=max_samples,
+                batch_size=batch_size,
+            )
+        else:
+            inference = DecoderInference(
+                model_path=model_path,
+                from_hf=cfg.from_hf,
+                train_data_path=train_data_path,
+                new_data_path=new_data_path,
+                gpu_id=0,
+            )
+            results = inference.evaluate_on_test_set(
+                os.path.expanduser(cfg.test_file), max_samples, batch_size
+            )
 
         if output_file:
             os.makedirs(os.path.dirname(output_file), exist_ok=True)
             with open(output_file, "w") as f:
                 json.dump(results, f, indent=2)
-            logger.info(f"Evaluation results saved to: {output_file}")
+            logger.info(f"Results saved to: {output_file}")
         else:
             logger.info(
                 f"Hit@1: {results['hit_at_1']:.4f} ({results['hit_at_1_count']}/{results['total']})"
@@ -393,7 +468,6 @@ def main(cfg: DictConfig) -> int:
         goldens = [res["true_docid"] for res in results]
         metrics_calculator = GRMetrics(model_outputs, goldens)
         metrics = metrics_calculator.calculate_metrics(k=[1, 10])
-
         logger.info(metrics)
 
     return 0

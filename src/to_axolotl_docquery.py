@@ -1,6 +1,7 @@
 import json
 import random
 import os
+from multiprocessing import Pool, cpu_count
 from typing import Dict, List, Optional
 
 from tqdm import tqdm
@@ -54,7 +55,12 @@ def generate_mem_indexing(target_doc: Dict) -> Dict:
 
 
 def generate_ctx_match(
-    target_query: Dict, all_docs: List, doc_to_queries: Dict, n_docs: int = 3
+    target_query: Dict,
+    all_docs: List,
+    doc_to_queries: Dict,
+    n_docs: int = 3,
+    doc_id_to_doc: Optional[Dict] = None,
+    eligible_docs: Optional[List] = None,
 ) -> Optional[Dict]:
     """ctx_match: CTX_SEARCH with target doc INCLUDED in Document Base.
 
@@ -74,14 +80,17 @@ def generate_ctx_match(
     """
     true_doc_id = target_query["doc_id"]
 
-    pos_doc = next((d for d in all_docs if d["doc_id"] == true_doc_id), None)
+    if doc_id_to_doc is not None:
+        pos_doc = doc_id_to_doc.get(true_doc_id)
+    else:
+        pos_doc = next((d for d in all_docs if d["doc_id"] == true_doc_id), None)
     if not pos_doc:
         return None
 
-    eligible_neg_docs = [
-        d for d in all_docs
-        if d["doc_id"] != true_doc_id and d["doc_id"] in doc_to_queries
+    pool = eligible_docs if eligible_docs is not None else [
+        d for d in all_docs if d["doc_id"] in doc_to_queries
     ]
+    eligible_neg_docs = [d for d in pool if d["doc_id"] != true_doc_id]
     if len(eligible_neg_docs) < n_docs - 1:
         return None
 
@@ -122,7 +131,11 @@ def generate_ctx_match(
 
 
 def generate_ctx_nomatch(
-    target_query: Dict, all_docs: List, doc_to_queries: Dict, n_docs: int = 3
+    target_query: Dict,
+    all_docs: List,
+    doc_to_queries: Dict,
+    n_docs: int = 3,
+    eligible_docs: Optional[List] = None,
 ) -> Optional[Dict]:
     """ctx_nomatch: CTX_SEARCH with target doc NOT in Document Base.
 
@@ -131,11 +144,11 @@ def generate_ctx_nomatch(
     """
     true_doc_id = target_query["doc_id"]
 
-    # Need n_docs docs total: n_docs-1 have queries for QA demos, 1 is noise
-    eligible_for_qa = [
-        d for d in all_docs
-        if d["doc_id"] != true_doc_id and d["doc_id"] in doc_to_queries
+    pool = eligible_docs if eligible_docs is not None else [
+        d for d in all_docs if d["doc_id"] in doc_to_queries
     ]
+    # Need n_docs docs total: n_docs-1 have queries for QA demos, 1 is noise
+    eligible_for_qa = [d for d in pool if d["doc_id"] != true_doc_id]
     if len(eligible_for_qa) < n_docs:
         return None
 
@@ -176,6 +189,17 @@ def generate_ctx_nomatch(
     }
 
 
+def _process_query(args):
+    """Worker function for multiprocessing."""
+    q, train_docs, doc_to_queries, n_shot, doc_id_to_doc, eligible_docs = args
+    mem = generate_mem_retrieval(q)
+    ctx_m = generate_ctx_match(q, train_docs, doc_to_queries, n_docs=n_shot,
+                                doc_id_to_doc=doc_id_to_doc, eligible_docs=eligible_docs)
+    ctx_nm = generate_ctx_nomatch(q, train_docs, doc_to_queries, n_docs=n_shot,
+                                   eligible_docs=eligible_docs)
+    return mem, ctx_m, ctx_nm
+
+
 def subsample(examples: List, target_n: int) -> List:
     if len(examples) <= target_n:
         return examples
@@ -190,9 +214,13 @@ def process_and_save(train_docs, train_queries, dataset, output_path, n_shot, ty
     queries = [s for s in dataset if s["operation"] == "query"]
 
     # Build doc_id -> queries mapping for ICL demonstrations
-    doc_to_queries = {}
+    doc_to_queries: Dict[str, List] = {}
     for q in train_queries:
         doc_to_queries.setdefault(q["doc_id"], []).append(q)
+
+    # Pre-compute lookups to avoid O(N) scans inside each query iteration
+    doc_id_to_doc: Dict[str, Dict] = {d["doc_id"]: d for d in train_docs}
+    eligible_docs: List = [d for d in train_docs if d["doc_id"] in doc_to_queries]
 
     print(f"Processing and saving to: {output_path}")
 
@@ -200,16 +228,25 @@ def process_and_save(train_docs, train_queries, dataset, output_path, n_shot, ty
     ctx_match_examples = []
     ctx_nomatch_examples = []
 
-    for q in tqdm(queries, desc="Generating query examples"):
-        mem_retrieval_examples.append(generate_mem_retrieval(q))
+    n_workers = max(1, cpu_count() - 1)
+    args_list = [
+        (q, train_docs, doc_to_queries, n_shot, doc_id_to_doc, eligible_docs)
+        for q in queries
+    ]
 
-        ex = generate_ctx_match(q, train_docs, doc_to_queries, n_docs=n_shot)
-        if ex:
-            ctx_match_examples.append(ex)
+    with Pool(processes=n_workers) as pool:
+        results = list(tqdm(
+            pool.imap(_process_query, args_list, chunksize=64),
+            total=len(queries),
+            desc="Generating query examples",
+        ))
 
-        ex = generate_ctx_nomatch(q, train_docs, doc_to_queries, n_docs=n_shot)
-        if ex:
-            ctx_nomatch_examples.append(ex)
+    for mem, ctx_m, ctx_nm in results:
+        mem_retrieval_examples.append(mem)
+        if ctx_m:
+            ctx_match_examples.append(ctx_m)
+        if ctx_nm:
+            ctx_nomatch_examples.append(ctx_nm)
 
     mem_indexing_examples = [
         generate_mem_indexing(d)
@@ -223,11 +260,13 @@ def process_and_save(train_docs, train_queries, dataset, output_path, n_shot, ty
         "ctx_match":     ctx_match_examples,
         "ctx_nomatch":   ctx_nomatch_examples,
     }
-    total_raw = sum(len(v) for v in pool.values())
+    n_queries = len(queries)
+    print(f"  queries={n_queries}  docs={len(docs)}  raw: " +
+          "  ".join(f"{k}={len(v)}" for k, v in pool.items()))
     subsampled = {}
     for name, examples in pool.items():
         ratio = type_ratios.get(name, 1.0)
-        target_n = max(1, int(total_raw * ratio)) if examples else 0
+        target_n = max(1, int(n_queries * ratio)) if examples else 0
         subsampled[name] = subsample(examples, target_n)
 
     all_examples = [ex for exs in subsampled.values() for ex in exs]

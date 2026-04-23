@@ -2,10 +2,10 @@ input_path: "./data/msmarco-ICL-100k"
 zs_input_path: "./data/msmarco_text-with_pseudo_query-100k-gr/train.jsonl"
 dataset_name: "msmarco"
 n_shot: 3
-output_dir: "./data/msmarco-docquery-100k-3shot_v3_balanced"
+output_dir: "./data/msmarco-docquery-100k-3shot_v3_noise_heavy"
 
 type_ratios:
   doc_pos_front: 0.125          # 1/8 of n_queries ≈ 8k
   doc_pos_back:  0.125          # 1/8 of n_queries ≈ 8k
   all_noise:     1.0            # 8/8 of n_queries ≈ 64k
-  stage1:        1.0            # retrieval + indexing total ≈ 64k (half each)
+  stage1:        0.25           # retrieval + indexing total ≈ 16k (~8k each)
