@@ -223,3 +223,91 @@ class TrieConstrainedLogitsProcessor(LogitsProcessor):
                 scores[i] = new_row_scores
 
         return scores
+
+
+class TrieConstrainedLogitsProcessorWithTag(LogitsProcessor):
+    """
+    HuggingFace LogitsProcessor that masks invalid tokens based on a Trie.
+    prompt_length: input_ids length before generation starts
+    """
+
+    def __init__(
+        self,
+        trie_root: TrieNode,
+        prompt_length: int,
+        eos_token_id: int,
+        copy_token_id: int,
+        num_beams: int,
+        context_ids: list[list[list[int]]],  # [batch, n_context_docs, token_ids]
+    ) -> None:
+        self.root = trie_root
+        self.prompt_length = prompt_length
+        self.eos_token_id = eos_token_id
+        self.copy_token_id = copy_token_id
+        self.num_beams = num_beams
+        self.context_ids = context_ids
+        self.context_tries = []
+
+        for sample_docs in self.context_ids:
+            context_root = TrieNode()
+
+            for docid_tokens in sample_docs:
+                node = context_root
+
+                for token in docid_tokens:
+                    if token not in node.children:
+                        node.children[token] = TrieNode()
+
+                    node = node.children[token]
+
+            self.context_tries.append(context_root)
+
+    def _get_valid_tokens(
+        self, trie_root: TrieNode, generated_seq: list[int]
+    ) -> list[int]:
+        node = trie_root
+
+        for token in generated_seq:
+            if token in node.children:
+                node = node.children[token]
+            else:
+                return [self.eos_token_id]
+
+        valid = list(node.children.keys())
+
+        return valid if valid else [self.eos_token_id]
+
+    def __call__(
+        self, input_ids: torch.LongTensor, scores: torch.FloatTensor
+    ) -> torch.FloatTensor:
+        """
+        Args:
+            input_ids: (batch_size, sequence_length) - The full sequence generated so far.
+            scores: (batch_size, vocab_size) - The raw logits for the NEXT token.
+        """
+        mask_value = float("-inf")
+        batch_size = input_ids.shape[0]
+
+        for beam_idx in range(batch_size):
+            sample_idx = beam_idx // self.num_beams
+            current_generated_seq = input_ids[beam_idx][self.prompt_length :].tolist()
+
+            if len(current_generated_seq) == 0:
+                valid_tokens = list(self.root.children.keys()) + [self.copy_token_id]
+
+            elif current_generated_seq[0] == self.copy_token_id:
+                valid_tokens = self._get_valid_tokens(
+                    self.context_tries[sample_idx],
+                    current_generated_seq[1:],  # skip [COPY]
+                )
+            else:
+                valid_tokens = self._get_valid_tokens(self.root, current_generated_seq)
+
+            new_scores = torch.full_like(scores[beam_idx], mask_value)
+            valid_indices = torch.tensor(
+                valid_tokens, device=scores.device, dtype=torch.long
+            )
+            new_scores[valid_indices] = scores[beam_idx][valid_indices]
+            scores[beam_idx] = new_scores
+
+        return scores
