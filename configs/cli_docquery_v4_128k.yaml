@@ -1,0 +1,15 @@
+model_path: Lala8383/Qwen3-1.7B-icl-3shot-v4_128k
+train_file: "./data/msmarco-item-id-lower/train.jsonl"
+new_file: "./data/msmarco-item-id-lower/icl_test.jsonl"
+num_beams: 10
+num_return: 10
+max_new_tokens: 50
+no_trie: false
+mode: "file"
+query_file: "./data/msmarco-item-id-lower/test.jsonl"
+# query_file: "./data/msmarco-item-id-3shot-v4_128k/icl_test_3shot.jsonl"
+# query_file: "./data/msmarco-item-id-3shot-v4_128k/test_3shot.jsonl"
+max_samples: 1000
+
+# /mnt/raid0/home/lalako/ICLGR/data/msmarco-item-id-3shot-v4_128k/test_3shot.jsonl
+# CUDA_VISIBLE_DEVICES=2 python -m src.cli_docquery --config-name cli_docquery_v4_128k

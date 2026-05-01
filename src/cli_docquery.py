@@ -31,52 +31,83 @@ from transformers import (
     AutoTokenizer,
     AutoModelForCausalLM,
     GenerationConfig,
-    LogitsProcessorList,
     LogitsProcessor,
+    LogitsProcessorList,
 )
 
-
-class TrieNode:
-    def __init__(self):
-        self.children: Dict[int, "TrieNode"] = {}
-        self.end_of_docid: bool = False
+from src.inference_utils import TrieNode
 
 
-class TrieConstrainedLogitsProcessor(LogitsProcessor):
-    def __init__(self, trie_root: TrieNode, prompt_length: int, eos_token_id: int):
+class TrieConstrainedLogitsProcessorMultiTokenCopy(LogitsProcessor):
+    """Trie-constrained decoding that supports a multi-token [COPY] prefix.
+
+    At step 0: allow global trie roots + first token of copy_token_ids.
+    While copy prefix is partially generated: force the next copy token.
+    After full copy prefix: switch to per-sample context trie.
+    Otherwise: follow global trie.
+    """
+
+    def __init__(
+        self,
+        trie_root: TrieNode,
+        prompt_length: int,
+        eos_token_id: int,
+        copy_token_ids: List[int],
+        num_beams: int,
+        context_ids: List[List[List[int]]],
+    ) -> None:
         self.root = trie_root
         self.prompt_length = prompt_length
         self.eos_token_id = eos_token_id
+        self.copy_token_ids = copy_token_ids
+        self.copy_len = len(copy_token_ids)
+        self.num_beams = num_beams
+
+        self.context_tries: List[TrieNode] = []
+        for sample_docs in context_ids:
+            ctx_root = TrieNode()
+            for docid_tokens in sample_docs:
+                node = ctx_root
+                for token in docid_tokens:
+                    if token not in node.children:
+                        node.children[token] = TrieNode()
+                    node = node.children[token]
+            self.context_tries.append(ctx_root)
+
+    def _get_valid_tokens(self, trie_root: TrieNode, generated_seq: List[int]) -> List[int]:
+        node = trie_root
+        for token in generated_seq:
+            if token in node.children:
+                node = node.children[token]
+            else:
+                return [self.eos_token_id]
+        valid = list(node.children.keys())
+        return valid if valid else [self.eos_token_id]
 
     def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor) -> torch.FloatTensor:
         batch_size = input_ids.shape[0]
-        for i in range(batch_size):
-            generated = input_ids[i][self.prompt_length:].tolist()
-            node = self.root
-            valid_path = True
-            for tok in generated:
-                if tok in node.children:
-                    node = node.children[tok]
-                else:
-                    valid_path = False
-                    break
+        for beam_idx in range(batch_size):
+            sample_idx = beam_idx // self.num_beams
+            generated = input_ids[beam_idx][self.prompt_length:].tolist()
 
-            if valid_path:
-                valid_tokens = list(node.children.keys())
-                if not valid_tokens and self.eos_token_id is not None:
-                    valid_tokens = [self.eos_token_id]
+            if len(generated) == 0:
+                valid_tokens = list(self.root.children.keys()) + [self.copy_token_ids[0]]
+            elif generated[:self.copy_len] == self.copy_token_ids:
+                valid_tokens = self._get_valid_tokens(
+                    self.context_tries[sample_idx], generated[self.copy_len:]
+                )
+            elif self.copy_token_ids[:len(generated)] == generated:
+                valid_tokens = [self.copy_token_ids[len(generated)]]
             else:
-                valid_tokens = [self.eos_token_id] if self.eos_token_id is not None else []
+                valid_tokens = self._get_valid_tokens(self.root, generated)
 
+            new_scores = torch.full_like(scores[beam_idx], float("-inf"))
             if valid_tokens:
                 idx = torch.tensor(valid_tokens, device=scores.device, dtype=torch.long)
-                mask = torch.full_like(scores[i], float("-inf"))
-                mask[idx] = scores[i][idx]
-                scores[i] = mask
+                new_scores[idx] = scores[beam_idx][idx]
             else:
-                scores[i] = torch.full_like(scores[i], float("-inf"))
-                if self.eos_token_id is not None:
-                    scores[i][self.eos_token_id] = 0.0
+                new_scores[self.eos_token_id] = 0.0
+            scores[beam_idx] = new_scores
         return scores
 
 
@@ -88,13 +119,12 @@ def build_trie(data_paths: List[str], tokenizer) -> TrieNode:
             for line in f:
                 item = json.loads(line)
                 if item.get("operation") == "indexing":
-                    docid_set.add(item["doc_id"]) # set1 
+                    docid_set.add(item["doc_id"])
                 elif item.get("conversations"):
-                    docid_set.add(item["conversations"][1]["content"]) # set2 
+                    docid_set.add(item["conversations"][1]["content"])
                     tid = item.get("metadata", {}).get("target_id")
                     if tid:
-                        docid_set.add(tid) # set3 
-                        docid_set.add(f"[COPY] {tid}") # set4 
+                        docid_set.add(tid)
 
     print(f"Trie: {len(docid_set)} unique targets")
     for doc_id_str in docid_set:
@@ -121,10 +151,20 @@ def clean_docid(docid: str) -> str:
         if st:
             return " ".join(st)
         return docid.strip()
+    # normalize [COPY] prefix spacing
+    if docid.startswith("[COPY]") and not docid.startswith("[COPY] "):
+        docid = "[COPY] " + docid[6:]
     return docid.strip()
 
 
-def run_query(query: str, model, tokenizer, gen_config, trie_root) -> List[str]:
+def run_query(
+    query: str,
+    model,
+    tokenizer,
+    gen_config,
+    trie_root,
+    copy_token_ids: List[int],
+) -> List[str]:
     """Run a single query and return cleaned predictions."""
     prompt = f"<|im_start|>user\n{query}<|im_end|>\n<|im_start|>assistant\n"
     inputs = tokenizer(prompt, return_tensors="pt", add_special_tokens=False).to(model.device)
@@ -132,9 +172,19 @@ def run_query(query: str, model, tokenizer, gen_config, trie_root) -> List[str]:
 
     kwargs = dict(generation_config=gen_config, **inputs)
     if trie_root is not None:
-        kwargs["logits_processor"] = LogitsProcessorList(
-            [TrieConstrainedLogitsProcessor(trie_root, prompt_len, tokenizer.eos_token_id)]
-        )
+        ctx_doc_ids = re.findall(r"Identifier:\s*(.+)", query)
+        ctx_ids = [tokenizer.encode(" " + d.strip(), add_special_tokens=False) for d in ctx_doc_ids]
+        print(f"  [DEBUG] context identifiers ({len(ctx_doc_ids)}): {ctx_doc_ids}")
+        kwargs["logits_processor"] = LogitsProcessorList([
+            TrieConstrainedLogitsProcessorMultiTokenCopy(
+                trie_root=trie_root,
+                prompt_length=prompt_len,
+                eos_token_id=tokenizer.eos_token_id,
+                copy_token_ids=copy_token_ids,
+                num_beams=gen_config.num_beams,
+                context_ids=[ctx_ids],
+            )
+        ])
 
     with torch.no_grad():
         outputs = model.generate(**kwargs)
@@ -152,7 +202,9 @@ def build_valid_ids(data_paths: List[str]) -> set:
             for line in f:
                 item = json.loads(line)
                 if item.get("operation") == "indexing":
-                    valid.add(item["doc_id"])
+                    doc_id = item["doc_id"]
+                    valid.add(doc_id)
+                    valid.add(f"[COPY] {doc_id}")
                 elif item.get("conversations"):
                     valid.add(item["conversations"][1]["content"])
                     tid = item.get("metadata", {}).get("target_id")
@@ -193,6 +245,9 @@ def load_model_and_trie(cfg: DictConfig):
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
+    copy_token_ids = tokenizer.encode("[COPY]", add_special_tokens=False)
+    print(f"[COPY] token ids: {copy_token_ids}")
+
     print(f"Loading model from {model_path} ...")
     model = AutoModelForCausalLM.from_pretrained(
         model_path,
@@ -217,10 +272,10 @@ def load_model_and_trie(cfg: DictConfig):
         num_return_sequences=cfg.num_return,
     )
 
-    return model, tokenizer, gen_config, trie_root, valid_ids
+    return model, tokenizer, gen_config, trie_root, valid_ids, copy_token_ids
 
 
-def run_file_mode(cfg: DictConfig, model, tokenizer, gen_config, trie_root, valid_ids: set):
+def run_file_mode(cfg: DictConfig, model, tokenizer, gen_config, trie_root, valid_ids: set, copy_token_ids: List[int]):
     """Read a JSONL file and run inference on each conversation."""
     query_file = os.path.expanduser(cfg.query_file)
     max_samples = cfg.get("max_samples", -1)
@@ -253,7 +308,7 @@ def run_file_mode(cfg: DictConfig, model, tokenizer, gen_config, trie_root, vali
 
         pattern = (item.get("metadata") or {}).get("pattern", "unknown")
 
-        predictions = run_query(query, model, tokenizer, gen_config, trie_root)
+        predictions = run_query(query, model, tokenizer, gen_config, trie_root, copy_token_ids)
 
         is_h1 = predictions[0] == target_id if predictions else False
         is_h10 = target_id in predictions
@@ -321,7 +376,7 @@ def run_file_mode(cfg: DictConfig, model, tokenizer, gen_config, trie_root, vali
     print(f"{'='*60}\n")
 
 
-def run_interactive_mode(model, tokenizer, gen_config, trie_root, valid_ids: set):
+def run_interactive_mode(model, tokenizer, gen_config, trie_root, valid_ids: set, copy_token_ids: List[int]):
     """Interactive REPL: type queries, get results."""
     print(f"\n{'='*60}")
     print("Model ready! Enter query to generate. Type 'quit' to exit.")
@@ -354,20 +409,20 @@ def run_interactive_mode(model, tokenizer, gen_config, trie_root, valid_ids: set
 
         query = "\n".join(lines)
         print(f"\n[Query] {query[:120]}{'...' if len(query) > 120 else ''}")
-        predictions = run_query(query, model, tokenizer, gen_config, trie_root)
+        predictions = run_query(query, model, tokenizer, gen_config, trie_root, copy_token_ids)
         print_results(predictions, valid_ids=valid_ids)
 
 
 @hydra.main(config_path="../configs", config_name="cli_docquery_conf", version_base=None)
 def main(cfg: DictConfig) -> None:
-    model, tokenizer, gen_config, trie_root, valid_ids = load_model_and_trie(cfg)
+    model, tokenizer, gen_config, trie_root, valid_ids, copy_token_ids = load_model_and_trie(cfg)
 
     mode = cfg.get("mode", "interactive")
 
     if mode == "file":
-        run_file_mode(cfg, model, tokenizer, gen_config, trie_root, valid_ids)
+        run_file_mode(cfg, model, tokenizer, gen_config, trie_root, valid_ids, copy_token_ids)
     else:
-        run_interactive_mode(model, tokenizer, gen_config, trie_root, valid_ids)
+        run_interactive_mode(model, tokenizer, gen_config, trie_root, valid_ids, copy_token_ids)
 
 
 if __name__ == "__main__":
