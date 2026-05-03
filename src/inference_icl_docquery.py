@@ -245,7 +245,7 @@ class DocQueryInference:
 
         docid = docid.strip()
         if docid.startswith("[COPY]"):
-            docid = docid[len("[COPY]"):].strip()
+            docid = docid[len("[COPY]") :].strip()
 
         return docid
 
@@ -267,7 +267,9 @@ class DocQueryInference:
         if max_samples:
             test_data = test_data[:max_samples]
 
-        logger.info(f"Evaluating on {len(test_data)} samples (batch_size={batch_size})...")
+        logger.info(
+            f"Evaluating on {len(test_data)} samples (batch_size={batch_size})..."
+        )
 
         hit_at_1 = 0
         hit_at_10 = 0
@@ -338,11 +340,14 @@ class DocQueryInference:
                 )
 
             idx = len(predictions)
-            postfix = {"Hit@1": f"{hit_at_1/idx:.2f}", "Hit@10": f"{hit_at_10/idx:.2f}"}
+            postfix = {
+                "Hit@1": f"{hit_at_1 / idx:.2f}",
+                "Hit@10": f"{hit_at_10 / idx:.2f}",
+            }
             for pat, counts in sorted(pattern_hits.items()):
                 n = counts["total"]
-                postfix[f"{pat}/H@1"] = f"{counts['hit_at_1']/n:.2f}"
-                postfix[f"{pat}/H@10"] = f"{counts['hit_at_10']/n:.2f}"
+                postfix[f"{pat}/H@1"] = f"{counts['hit_at_1'] / n:.2f}"
+                postfix[f"{pat}/H@10"] = f"{counts['hit_at_10'] / n:.2f}"
             pbar.set_postfix(postfix)
 
         hit_at_1_score = hit_at_1 / total

@@ -8,13 +8,17 @@ from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 
-def run_eval(model_path, gpu_id, max_samples, log_path, config_name,
-             pattern="", no_trie=False):
+def run_eval(
+    model_path, gpu_id, max_samples, log_path, config_name, pattern="", no_trie=False
+):
     env = os.environ.copy()
     env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
     cmd = [
-        "python", "-m", "src.cli_docquery",
-        "--config-name", config_name,
+        "python",
+        "-m",
+        "src.cli_docquery",
+        "--config-name",
+        config_name,
         f"model_path={model_path}",
         f"max_samples={max_samples}",
     ]
@@ -60,7 +64,9 @@ def main():
     parser.add_argument("--max_samples", type=int, default=500)
     parser.add_argument("--log_dir", type=str, default="logs")
     parser.add_argument("--pattern", type=str, default="")
-    parser.add_argument("--no_trie", action="store_true", help="Disable trie-constrained decoding")
+    parser.add_argument(
+        "--no_trie", action="store_true", help="Disable trie-constrained decoding"
+    )
     args = parser.parse_args()
 
     os.makedirs(args.log_dir, exist_ok=True)
@@ -68,7 +74,11 @@ def main():
     if args.base_model:
         eval_jobs.append(("base_model", args.base_model))
     ckpt_dirs = sorted(
-        [d for d in Path(args.ckpt_dir).iterdir() if d.is_dir() and d.name.startswith("checkpoint-")],
+        [
+            d
+            for d in Path(args.ckpt_dir).iterdir()
+            if d.is_dir() and d.name.startswith("checkpoint-")
+        ],
         key=lambda p: int(p.name.split("-")[-1]),
     )
     for ckpt in ckpt_dirs:
@@ -80,7 +90,9 @@ def main():
 
     names = [name for name, _ in eval_jobs]
     print(f"Models to evaluate ({len(eval_jobs)}): {names}")
-    print(f"Config: {args.config_name}, GPUs: {args.gpus}, max_samples: {args.max_samples}\n")
+    print(
+        f"Config: {args.config_name}, GPUs: {args.gpus}, max_samples: {args.max_samples}\n"
+    )
 
     num_gpus = len(args.gpus)
     log_paths = []
@@ -91,17 +103,27 @@ def main():
             gpu = args.gpus[i % num_gpus]
             log_path = os.path.join(args.log_dir, f"eval_{name}.log")
             log_paths.append(log_path)
-            futures[executor.submit(
-                run_eval, model_path, gpu, args.max_samples, log_path,
-                args.config_name, args.pattern, args.no_trie,
-            )] = name
+            futures[
+                executor.submit(
+                    run_eval,
+                    model_path,
+                    gpu,
+                    args.max_samples,
+                    log_path,
+                    args.config_name,
+                    args.pattern,
+                    args.no_trie,
+                )
+            ] = name
         for future in as_completed(futures):
             future.result()
 
-    print(f"\n{'='*120}")
+    print(f"\n{'=' * 120}")
     print("Summary")
-    print(f"{'='*120}")
-    print(f"{'Model':<20} {'Hit@1':>8} {'Hit@10':>8} | {'zs_ret/H@1':>10} {'zs_idx/H@1':>10} {'front/H@1':>10} {'back/H@1':>10} {'noise/H@1':>10}")
+    print(f"{'=' * 120}")
+    print(
+        f"{'Model':<20} {'Hit@1':>8} {'Hit@10':>8} | {'zs_ret/H@1':>10} {'zs_idx/H@1':>10} {'front/H@1':>10} {'back/H@1':>10} {'noise/H@1':>10}"
+    )
     print("-" * 120)
     for (name, _), log_path in zip(eval_jobs, log_paths):
         r = parse_results(log_path)
@@ -113,7 +135,7 @@ def main():
             f"{r.get('doc_pos_back/H@1', -1):>10.4f} "
             f"{r.get('all_noise/H@1', -1):>10.4f}"
         )
-    print(f"{'='*120}")
+    print(f"{'=' * 120}")
 
 
 if __name__ == "__main__":

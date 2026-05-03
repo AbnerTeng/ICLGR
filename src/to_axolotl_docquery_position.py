@@ -29,11 +29,7 @@ from omegaconf import DictConfig
 def generate_zero_shot(target_query: Dict) -> Dict:
     """Zero-shot retrieval: query → doc_id, no context at all."""
     true_doc_id = target_query["doc_id"]
-    user_content = (
-        "[MEM_SEARCH]\n"
-        f"Query: {target_query['text']}\n"
-        "Answer:"
-    )
+    user_content = f"[MEM_SEARCH]\nQuery: {target_query['text']}\nAnswer:"
     return {
         "conversations": [
             {"role": "user", "content": user_content},
@@ -50,8 +46,7 @@ def _build_ctx_search_text(
 ) -> str:
     """Assemble the [CTX_SEARCH] prompt shared by doc_pos_front / back / all_noise."""
     doc_base_lines = [
-        f"DocID: {doc['doc_id']} | Content: {doc['text']}"
-        for doc in context_docs
+        f"DocID: {doc['doc_id']} | Content: {doc['text']}" for doc in context_docs
     ]
     random.shuffle(qa_pairs)
     qa_lines = [f"Query: {q['text']} | DocID: {doc_id}" for q, doc_id in qa_pairs]
@@ -188,15 +183,24 @@ def generate_all_noise(
 def _process_query(args):
     q, doc_to_queries, n_shot, doc_id_to_doc, eligible_docs = args
     front = generate_doc_pos_front(
-        q, doc_to_queries, n_docs=n_shot,
-        doc_id_to_doc=doc_id_to_doc, eligible_docs=eligible_docs,
+        q,
+        doc_to_queries,
+        n_docs=n_shot,
+        doc_id_to_doc=doc_id_to_doc,
+        eligible_docs=eligible_docs,
     )
     back = generate_doc_pos_back(
-        q, doc_to_queries, n_docs=n_shot,
-        doc_id_to_doc=doc_id_to_doc, eligible_docs=eligible_docs,
+        q,
+        doc_to_queries,
+        n_docs=n_shot,
+        doc_id_to_doc=doc_id_to_doc,
+        eligible_docs=eligible_docs,
     )
     noise = generate_all_noise(
-        q, doc_to_queries, n_docs=n_shot, eligible_docs=eligible_docs,
+        q,
+        doc_to_queries,
+        n_docs=n_shot,
+        eligible_docs=eligible_docs,
     )
     zs = generate_zero_shot(q)
     return front, back, noise, zs
@@ -233,17 +237,18 @@ def process_and_save(
     print(f"Processing and saving to: {output_path}")
 
     args_list = [
-        (q, doc_to_queries, n_shot, doc_id_to_doc, eligible_docs)
-        for q in queries
+        (q, doc_to_queries, n_shot, doc_id_to_doc, eligible_docs) for q in queries
     ]
 
     n_workers = max(1, cpu_count() - 1)
     with Pool(processes=n_workers) as pool:
-        results = list(tqdm(
-            pool.imap(_process_query, args_list, chunksize=64),
-            total=len(queries),
-            desc="Generating examples",
-        ))
+        results = list(
+            tqdm(
+                pool.imap(_process_query, args_list, chunksize=64),
+                total=len(queries),
+                desc="Generating examples",
+            )
+        )
 
     buckets: Dict[str, List] = {
         "doc_pos_front": [],
@@ -261,8 +266,10 @@ def process_and_save(
         buckets["zero_shot"].append(zs)
 
     n_queries = len(queries)
-    print(f"  queries={n_queries}  raw: " +
-          "  ".join(f"{k}={len(v)}" for k, v in buckets.items()))
+    print(
+        f"  queries={n_queries}  raw: "
+        + "  ".join(f"{k}={len(v)}" for k, v in buckets.items())
+    )
 
     subsampled: Dict[str, List] = {}
     for name, examples in buckets.items():
@@ -285,7 +292,9 @@ def process_and_save(
 # ── Entry point ───────────────────────────────────────────────────────────
 
 
-@hydra.main(config_path="../configs", config_name="get_docquery_position", version_base=None)
+@hydra.main(
+    config_path="../configs", config_name="get_docquery_position", version_base=None
+)
 def main(cfg: DictConfig):
     dataset = load_dataset(
         "json",
@@ -311,7 +320,14 @@ def main(cfg: DictConfig):
             queries_pool = [s for s in dataset["icl_test"] if s["operation"] == "query"]
 
         out_file = f"{cfg.output_dir}/{split}_{cfg.n_shot}shot.jsonl"
-        process_and_save(docs_pool, queries_pool, dataset[split], out_file, cfg.n_shot, dict(cfg.type_ratios))
+        process_and_save(
+            docs_pool,
+            queries_pool,
+            dataset[split],
+            out_file,
+            cfg.n_shot,
+            dict(cfg.type_ratios),
+        )
 
     print("\nConversion complete for all format types.")
 

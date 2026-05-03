@@ -55,17 +55,17 @@ from omegaconf import DictConfig
 
 # ── Template builder ──────────────────────────────────────────────────────
 
+
 def _build_ctx_prompt(context_docs: List[Dict], query_text: str) -> str:
     doc_blocks = []
     for i, doc in enumerate(context_docs):
         doc_blocks.append(
-            f"Document {i + 1}\n"
-            f"Text: {doc['text']}\n"
-            f"Identifier: {doc['item']}"
+            f"Document {i + 1}\nText: {doc['text']}\nIdentifier: {doc['item']}"
         )
     return (
         "## Documents\n"
-        + "\n\n".join(doc_blocks) + "\n\n\n"
+        + "\n\n".join(doc_blocks)
+        + "\n\n\n"
         + "## Task\n"
         + f"Query: {query_text}\n"
         + "Answer:"
@@ -80,13 +80,10 @@ def _build_answer(item: str, copy: bool = False) -> str:
 
 # ── Pattern generators ────────────────────────────────────────────────────
 
+
 def generate_zero_shot(target_query: Dict) -> Dict:
     true_item = target_query["item"]
-    user_content = (
-        "## Task\n"
-        f"Query: {target_query['text']}\n"
-        "Answer:"
-    )
+    user_content = f"## Task\nQuery: {target_query['text']}\nAnswer:"
     return {
         "conversations": [
             {"role": "user", "content": user_content},
@@ -175,7 +172,10 @@ def generate_all_noise(
     return {
         "conversations": [
             {"role": "user", "content": user_content},
-            {"role": "assistant", "content": _build_answer(distractor_item, copy=False)},
+            {
+                "role": "assistant",
+                "content": _build_answer(distractor_item, copy=False),
+            },
         ],
         "metadata": {
             "pattern": "all_noise",
@@ -187,16 +187,22 @@ def generate_all_noise(
 
 # ── Multiprocessing worker ────────────────────────────────────────────────
 
+
 def _process_query(args):
     q, n_shot, doc_id_to_doc, eligible_docs = args
-    front = generate_doc_pos_front(q, n_docs=n_shot, doc_id_to_doc=doc_id_to_doc, eligible_docs=eligible_docs)
-    back = generate_doc_pos_back(q, n_docs=n_shot, doc_id_to_doc=doc_id_to_doc, eligible_docs=eligible_docs)
+    front = generate_doc_pos_front(
+        q, n_docs=n_shot, doc_id_to_doc=doc_id_to_doc, eligible_docs=eligible_docs
+    )
+    back = generate_doc_pos_back(
+        q, n_docs=n_shot, doc_id_to_doc=doc_id_to_doc, eligible_docs=eligible_docs
+    )
     noise = generate_all_noise(q, n_docs=n_shot, eligible_docs=eligible_docs)
     zs = generate_zero_shot(q)
     return front, back, noise, zs
 
 
 # ── Pipeline ──────────────────────────────────────────────────────────────
+
 
 def subsample(examples: List, target_n: int) -> List:
     if len(examples) <= target_n:
@@ -221,18 +227,17 @@ def process_and_save(
 
     print(f"Processing and saving to: {output_path}")
 
-    args_list = [
-        (q, n_shot, doc_id_to_doc, eligible_docs)
-        for q in queries
-    ]
+    args_list = [(q, n_shot, doc_id_to_doc, eligible_docs) for q in queries]
 
     n_workers = max(1, cpu_count() - 1)
     with Pool(processes=n_workers) as pool:
-        results = list(tqdm(
-            pool.imap(_process_query, args_list, chunksize=64),
-            total=len(queries),
-            desc="Generating examples",
-        ))
+        results = list(
+            tqdm(
+                pool.imap(_process_query, args_list, chunksize=64),
+                total=len(queries),
+                desc="Generating examples",
+            )
+        )
 
     buckets: Dict[str, List] = {
         "doc_pos_front": [],
@@ -250,8 +255,10 @@ def process_and_save(
         buckets["zero_shot"].append(zs)
 
     n_queries = len(queries)
-    print(f"  queries={n_queries}  raw: " +
-          "  ".join(f"{k}={len(v)}" for k, v in buckets.items()))
+    print(
+        f"  queries={n_queries}  raw: "
+        + "  ".join(f"{k}={len(v)}" for k, v in buckets.items())
+    )
 
     subsampled: Dict[str, List] = {}
     for name, examples in buckets.items():
@@ -273,7 +280,12 @@ def process_and_save(
 
 # ── Entry point ───────────────────────────────────────────────────────────
 
-@hydra.main(config_path="../configs", config_name="get_docquery_position_template_v3", version_base=None)
+
+@hydra.main(
+    config_path="../configs",
+    config_name="get_docquery_position_template_v3",
+    version_base=None,
+)
 def main(cfg: DictConfig):
     dataset = load_dataset(
         "json",
@@ -299,7 +311,14 @@ def main(cfg: DictConfig):
             queries_pool = [s for s in dataset["icl_test"] if s["operation"] == "query"]
 
         out_file = f"{cfg.output_dir}/{split}_{cfg.n_shot}shot.jsonl"
-        process_and_save(docs_pool, queries_pool, dataset[split], out_file, cfg.n_shot, dict(cfg.type_ratios))
+        process_and_save(
+            docs_pool,
+            queries_pool,
+            dataset[split],
+            out_file,
+            cfg.n_shot,
+            dict(cfg.type_ratios),
+        )
 
     print("\nConversion complete for all format types.")
 

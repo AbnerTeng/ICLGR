@@ -48,10 +48,12 @@ class TrieConstrainedLogitsProcessor(LogitsProcessor):
         self.prompt_length = prompt_length
         self.eos_token_id = eos_token_id
 
-    def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor) -> torch.FloatTensor:
+    def __call__(
+        self, input_ids: torch.LongTensor, scores: torch.FloatTensor
+    ) -> torch.FloatTensor:
         batch_size = input_ids.shape[0]
         for i in range(batch_size):
-            generated = input_ids[i][self.prompt_length:].tolist()
+            generated = input_ids[i][self.prompt_length :].tolist()
             node = self.root
             valid_path = True
             for tok in generated:
@@ -66,7 +68,9 @@ class TrieConstrainedLogitsProcessor(LogitsProcessor):
                 if not valid_tokens and self.eos_token_id is not None:
                     valid_tokens = [self.eos_token_id]
             else:
-                valid_tokens = [self.eos_token_id] if self.eos_token_id is not None else []
+                valid_tokens = (
+                    [self.eos_token_id] if self.eos_token_id is not None else []
+                )
 
             if valid_tokens:
                 idx = torch.tensor(valid_tokens, device=scores.device, dtype=torch.long)
@@ -88,13 +92,13 @@ def build_trie(data_paths: List[str], tokenizer) -> TrieNode:
             for line in f:
                 item = json.loads(line)
                 if item.get("operation") == "indexing":
-                    docid_set.add(item["doc_id"]) # set1 
+                    docid_set.add(item["doc_id"])  # set1
                 elif item.get("conversations"):
-                    docid_set.add(item["conversations"][1]["content"]) # set2 
+                    docid_set.add(item["conversations"][1]["content"])  # set2
                     tid = item.get("metadata", {}).get("target_id")
                     if tid:
-                        docid_set.add(tid) # set3 
-                        docid_set.add(f"[COPY] {tid}") # set4 
+                        docid_set.add(tid)  # set3
+                        docid_set.add(f"[COPY] {tid}")  # set4
 
     print(f"Trie: {len(docid_set)} unique targets")
     for doc_id_str in docid_set:
@@ -127,13 +131,19 @@ def clean_docid(docid: str) -> str:
 def run_query(query: str, model, tokenizer, gen_config, trie_root) -> List[str]:
     """Run a single query and return cleaned predictions."""
     prompt = f"<|im_start|>user\n{query}<|im_end|>\n<|im_start|>assistant\n"
-    inputs = tokenizer(prompt, return_tensors="pt", add_special_tokens=False).to(model.device)
+    inputs = tokenizer(prompt, return_tensors="pt", add_special_tokens=False).to(
+        model.device
+    )
     prompt_len = inputs["input_ids"].shape[1]
 
     kwargs = dict(generation_config=gen_config, **inputs)
     if trie_root is not None:
         kwargs["logits_processor"] = LogitsProcessorList(
-            [TrieConstrainedLogitsProcessor(trie_root, prompt_len, tokenizer.eos_token_id)]
+            [
+                TrieConstrainedLogitsProcessor(
+                    trie_root, prompt_len, tokenizer.eos_token_id
+                )
+            ]
         )
 
     with torch.no_grad():
@@ -162,7 +172,9 @@ def build_valid_ids(data_paths: List[str]) -> set:
     return valid
 
 
-def print_results(predictions: List[str], true_docid: str = None, valid_ids: set = None):
+def print_results(
+    predictions: List[str], true_docid: str = None, valid_ids: set = None
+):
     print(f"  Top-{len(predictions)} results:")
     for i, pred in enumerate(predictions, 1):
         markers = []
@@ -189,7 +201,9 @@ def load_model_and_trie(cfg: DictConfig):
         data_files.append(new_file)
 
     print(f"Loading tokenizer from {model_path} ...")
-    tokenizer = AutoTokenizer.from_pretrained(model_path, padding_side="left", trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_path, padding_side="left", trust_remote_code=True
+    )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
@@ -220,7 +234,9 @@ def load_model_and_trie(cfg: DictConfig):
     return model, tokenizer, gen_config, trie_root, valid_ids
 
 
-def run_file_mode(cfg: DictConfig, model, tokenizer, gen_config, trie_root, valid_ids: set):
+def run_file_mode(
+    cfg: DictConfig, model, tokenizer, gen_config, trie_root, valid_ids: set
+):
     """Read a JSONL file and run inference on each conversation."""
     query_file = os.path.expanduser(cfg.query_file)
     max_samples = cfg.get("max_samples", -1)
@@ -238,10 +254,16 @@ def run_file_mode(cfg: DictConfig, model, tokenizer, gen_config, trie_root, vali
     valid_top1, valid_all = 0, 0
     total_preds = 0
     from collections import defaultdict
-    pattern_hits = defaultdict(lambda: {
-        "h1": 0, "h10": 0, "n": 0,
-        "copy_top1": 0, "copy_top1_in_content": 0,
-    })
+
+    pattern_hits = defaultdict(
+        lambda: {
+            "h1": 0,
+            "h10": 0,
+            "n": 0,
+            "copy_top1": 0,
+            "copy_top1_in_content": 0,
+        }
+    )
 
     for idx, item in enumerate(data, 1):
         if item.get("conversations"):
@@ -278,7 +300,7 @@ def run_file_mode(cfg: DictConfig, model, tokenizer, gen_config, trie_root, vali
         top1_pred = predictions[0] if predictions else ""
         if top1_pred.startswith("[COPY]"):
             pattern_hits[pattern]["copy_top1"] += 1
-            copied_id = top1_pred[len("[COPY]"):].strip()
+            copied_id = top1_pred[len("[COPY]") :].strip()
             if copied_id in query:
                 pattern_hits[pattern]["copy_top1_in_content"] += 1
 
@@ -287,8 +309,12 @@ def run_file_mode(cfg: DictConfig, model, tokenizer, gen_config, trie_root, vali
         print_results(predictions, true_docid=target_id, valid_ids=valid_ids)
 
         if idx % 10 == 0 or idx == len(data):
-            print(f"--- Running  Hit@1: {hit_at_1/total:.4f}  Hit@10: {hit_at_10/total:.4f}  ({total} samples) ---")
-            print(f"--- Valid@1: {valid_top1/total:.2%}  Valid(all beams): {valid_all/total_preds:.2%} ---")
+            print(
+                f"--- Running  Hit@1: {hit_at_1 / total:.4f}  Hit@10: {hit_at_10 / total:.4f}  ({total} samples) ---"
+            )
+            print(
+                f"--- Valid@1: {valid_top1 / total:.2%}  Valid(all beams): {valid_all / total_preds:.2%} ---"
+            )
             for pat, c in sorted(pattern_hits.items()):
                 n = c["n"]
                 copy_top1 = c["copy_top1"]
@@ -296,17 +322,23 @@ def run_file_mode(cfg: DictConfig, model, tokenizer, gen_config, trie_root, vali
                 copy_ok = c["copy_top1_in_content"]
                 copy_acc = copy_ok / copy_top1 if copy_top1 else 0
                 print(
-                    f"    [{pat}] H@1={c['h1']/n:.4f} H@10={c['h10']/n:.4f} "
+                    f"    [{pat}] H@1={c['h1'] / n:.4f} H@10={c['h10'] / n:.4f} "
                     f"copy@1={copy_at_1:.2%}({copy_top1}/{n}) copy_in_ctx@1={copy_acc:.2%} (n={n})"
                 )
             print()
 
-    print(f"\n{'='*60}")
-    print(f"Final  Hit@1:  {hit_at_1/total:.4f} ({hit_at_1}/{total})")
-    print(f"Final Hit@10:  {hit_at_10/total:.4f} ({hit_at_10}/{total})")
-    print(f"Valid@1 (top-1 is known ID):  {valid_top1/total:.2%} ({valid_top1}/{total})")
-    print(f"Valid(all beams are known ID): {valid_all/total_preds:.2%} ({valid_all}/{total_preds})")
-    print(f"\n{'Pattern':<20} {'H@1':>6} {'H@10':>6} {'Copy@1':>12} {'CopyInCtx@1':>12} {'n':>6}")
+    print(f"\n{'=' * 60}")
+    print(f"Final  Hit@1:  {hit_at_1 / total:.4f} ({hit_at_1}/{total})")
+    print(f"Final Hit@10:  {hit_at_10 / total:.4f} ({hit_at_10}/{total})")
+    print(
+        f"Valid@1 (top-1 is known ID):  {valid_top1 / total:.2%} ({valid_top1}/{total})"
+    )
+    print(
+        f"Valid(all beams are known ID): {valid_all / total_preds:.2%} ({valid_all}/{total_preds})"
+    )
+    print(
+        f"\n{'Pattern':<20} {'H@1':>6} {'H@10':>6} {'Copy@1':>12} {'CopyInCtx@1':>12} {'n':>6}"
+    )
     print("-" * 64)
     for pat, c in sorted(pattern_hits.items()):
         n = c["n"]
@@ -315,18 +347,18 @@ def run_file_mode(cfg: DictConfig, model, tokenizer, gen_config, trie_root, vali
         copy_ok = c["copy_top1_in_content"]
         copy_acc = copy_ok / copy_top1 if copy_top1 else 0
         print(
-            f"  {pat:<18} {c['h1']/n:.4f} {c['h10']/n:.4f} "
+            f"  {pat:<18} {c['h1'] / n:.4f} {c['h10'] / n:.4f} "
             f"{copy_at_1:>7.2%}{copy_top1}/{n} {copy_acc:>11.2%} {n:>6}"
         )
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
 
 def run_interactive_mode(model, tokenizer, gen_config, trie_root, valid_ids: set):
     """Interactive REPL: type queries, get results."""
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("Model ready! Enter query to generate. Type 'quit' to exit.")
     print("Tip: paste multi-line input, end with an empty line.")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     while True:
         try:
@@ -358,7 +390,9 @@ def run_interactive_mode(model, tokenizer, gen_config, trie_root, valid_ids: set
         print_results(predictions, valid_ids=valid_ids)
 
 
-@hydra.main(config_path="../configs", config_name="cli_docquery_conf", version_base=None)
+@hydra.main(
+    config_path="../configs", config_name="cli_docquery_conf", version_base=None
+)
 def main(cfg: DictConfig) -> None:
     model, tokenizer, gen_config, trie_root, valid_ids = load_model_and_trie(cfg)
 

@@ -37,7 +37,9 @@ def main():
     parser.add_argument("--src", default="Lala8383/msmarco-item-id-3shot-v4_128k")
     parser.add_argument("--out", default="data/msmarco-icl-3shot-v4-retrieve")
     parser.add_argument("--push", action="store_true", help="Push to HuggingFace Hub")
-    parser.add_argument("--dst", default="Lala8383/msmarco-item-id-3shot-v4_128k_retrieve")
+    parser.add_argument(
+        "--dst", default="Lala8383/msmarco-item-id-3shot-v4_128k_retrieve"
+    )
     args = parser.parse_args()
 
     os.makedirs(args.out, exist_ok=True)
@@ -49,8 +51,12 @@ def main():
         ds = load_dataset(args.src, split=split)
         ds = ds.map(add_retrieve_token, desc=f"Adding [RETRIEVE] to {split}")
 
-        n_retrieve = sum(1 for x in ds if x["conversations"][-1]["content"].startswith("[RETRIEVE]"))
-        n_copy = sum(1 for x in ds if x["conversations"][-1]["content"].startswith("[COPY]"))
+        n_retrieve = sum(
+            1 for x in ds if x["conversations"][-1]["content"].startswith("[RETRIEVE]")
+        )
+        n_copy = sum(
+            1 for x in ds if x["conversations"][-1]["content"].startswith("[COPY]")
+        )
         print(f"  [RETRIEVE]={n_retrieve}  [COPY]={n_copy}  total={len(ds)}")
 
         out_file = os.path.join(args.out, f"{split}.jsonl")
@@ -66,7 +72,9 @@ def main():
         DatasetDict(dataset_dict).push_to_hub(args.dst)
         print("Done.")
     else:
-        print(f"\nSaved all splits to {args.out}/  (pass --push to also upload to HuggingFace)")
+        print(
+            f"\nSaved all splits to {args.out}/  (pass --push to also upload to HuggingFace)"
+        )
 
 
 if __name__ == "__main__":

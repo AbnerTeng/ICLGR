@@ -131,7 +131,12 @@ class TrieNode:
         self.end_of_docid: bool = False
 
 
-def build_semantic_docid_trie(data_paths: List[str], tokenizer) -> TrieNode:
+def build_semantic_docid_trie(
+    data_paths: List[str],
+    tokenizer,
+    id_field: str = "doc_id",
+    leading_space: bool = False,
+) -> TrieNode:
     root = TrieNode()
 
     if isinstance(data_paths, str):
@@ -145,10 +150,11 @@ def build_semantic_docid_trie(data_paths: List[str], tokenizer) -> TrieNode:
                 item = json.loads(line)
 
                 if item.get("operation") == "indexing":
-                    docids.append(item["doc_id"])
+                    docids.append(item[id_field])
 
     for doc_id_str in docids:
-        token_ids = tokenizer.encode(doc_id_str, add_special_tokens=False)
+        text = (" " if leading_space else "") + doc_id_str
+        token_ids = tokenizer.encode(text, add_special_tokens=False)
         node = root
 
         for token_id in token_ids:
@@ -221,6 +227,92 @@ class TrieConstrainedLogitsProcessor(LogitsProcessor):
                 if self.eos_token_id is not None:
                     new_row_scores[self.eos_token_id] = 0.0
                 scores[i] = new_row_scores
+
+        return scores
+
+
+class TrieConstrainedLogitsProcessorWithDualTag(LogitsProcessor):
+    """
+    Constrained decoding for the [COPY] + [RETRIEVE] setting.
+
+    Step 0 allows only [COPY] or [RETRIEVE].
+    [COPY]     -> constrain subsequent tokens to the per-sample context trie.
+    [RETRIEVE] -> constrain subsequent tokens to the global docid trie.
+    """
+
+    def __init__(
+        self,
+        trie_root: TrieNode,
+        prompt_length: int,
+        eos_token_id: int,
+        copy_token_id: int,
+        retrieve_token_id: int,
+        num_beams: int,
+        context_ids: list[list[list[int]]],  # [batch, n_context_docs, token_ids]
+    ) -> None:
+        self.root = trie_root
+        self.prompt_length = prompt_length
+        self.eos_token_id = eos_token_id
+        self.copy_token_id = copy_token_id
+        self.retrieve_token_id = retrieve_token_id
+        self.num_beams = num_beams
+        self.context_ids = context_ids
+        self.context_tries = []
+
+        for sample_docs in self.context_ids:
+            context_root = TrieNode()
+            for docid_tokens in sample_docs:
+                node = context_root
+                for token in docid_tokens:
+                    if token not in node.children:
+                        node.children[token] = TrieNode()
+                    node = node.children[token]
+            self.context_tries.append(context_root)
+
+    def _get_valid_tokens(
+        self, trie_root: TrieNode, generated_seq: list[int]
+    ) -> list[int]:
+        node = trie_root
+        for token in generated_seq:
+            if token in node.children:
+                node = node.children[token]
+            else:
+                return [self.eos_token_id]
+        valid = list(node.children.keys())
+        return valid if valid else [self.eos_token_id]
+
+    def __call__(
+        self, input_ids: torch.LongTensor, scores: torch.FloatTensor
+    ) -> torch.FloatTensor:
+        mask_value = float("-inf")
+        batch_size = input_ids.shape[0]
+
+        for beam_idx in range(batch_size):
+            sample_idx = beam_idx // self.num_beams
+            current_generated_seq = input_ids[beam_idx][self.prompt_length :].tolist()
+
+            if len(current_generated_seq) == 0:
+                valid_tokens = [self.copy_token_id, self.retrieve_token_id]
+
+            elif current_generated_seq[0] == self.copy_token_id:
+                valid_tokens = self._get_valid_tokens(
+                    self.context_tries[sample_idx],
+                    current_generated_seq[1:],  # skip [COPY]
+                )
+            elif current_generated_seq[0] == self.retrieve_token_id:
+                valid_tokens = self._get_valid_tokens(
+                    self.root,
+                    current_generated_seq[1:],  # skip [RETRIEVE]
+                )
+            else:
+                valid_tokens = [self.eos_token_id]
+
+            new_scores = torch.full_like(scores[beam_idx], mask_value)
+            valid_indices = torch.tensor(
+                valid_tokens, device=scores.device, dtype=torch.long
+            )
+            new_scores[valid_indices] = scores[beam_idx][valid_indices]
+            scores[beam_idx] = new_scores
 
         return scores
 

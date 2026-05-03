@@ -79,9 +79,11 @@ def generate_ctx_match(
     if not pos_doc:
         return None
 
-    pool = eligible_docs if eligible_docs is not None else [
-        d for d in all_docs if d["doc_id"] in doc_to_queries
-    ]
+    pool = (
+        eligible_docs
+        if eligible_docs is not None
+        else [d for d in all_docs if d["doc_id"] in doc_to_queries]
+    )
     eligible_neg_docs = [d for d in pool if d["doc_id"] != true_doc_id]
     if len(eligible_neg_docs) < n_docs - 1:
         return None
@@ -135,12 +137,15 @@ def generate_ctx_nomatch(
     """
     true_doc_id = target_query["doc_id"]
 
-    pool = eligible_docs if eligible_docs is not None else [
-        d for d in all_docs if d["doc_id"] in doc_to_queries
-    ]
+    pool = (
+        eligible_docs
+        if eligible_docs is not None
+        else [d for d in all_docs if d["doc_id"] in doc_to_queries]
+    )
     # Need n_docs docs total: n_docs-1 have queries for QA demos, 1 is noise
     eligible_for_qa = [
-        d for d in all_docs
+        d
+        for d in all_docs
         if d["doc_id"] != true_doc_id and d["doc_id"] in doc_to_queries
     ]
     if len(eligible_for_qa) < n_docs:
@@ -185,10 +190,17 @@ def _process_query(args):
     """Worker function for multiprocessing."""
     q, train_docs, doc_to_queries, n_shot, doc_id_to_doc, eligible_docs = args
     mem = generate_mem_retrieval(q)
-    ctx_m = generate_ctx_match(q, train_docs, doc_to_queries, n_docs=n_shot,
-                                doc_id_to_doc=doc_id_to_doc, eligible_docs=eligible_docs)
-    ctx_nm = generate_ctx_nomatch(q, train_docs, doc_to_queries, n_docs=n_shot,
-                                   eligible_docs=eligible_docs)
+    ctx_m = generate_ctx_match(
+        q,
+        train_docs,
+        doc_to_queries,
+        n_docs=n_shot,
+        doc_id_to_doc=doc_id_to_doc,
+        eligible_docs=eligible_docs,
+    )
+    ctx_nm = generate_ctx_nomatch(
+        q, train_docs, doc_to_queries, n_docs=n_shot, eligible_docs=eligible_docs
+    )
     return mem, ctx_m, ctx_nm
 
 
@@ -229,11 +241,13 @@ def process_and_save(
     ]
 
     with Pool(processes=n_workers) as pool:
-        results = list(tqdm(
-            pool.imap(_process_query, args_list, chunksize=64),
-            total=len(queries),
-            desc="Generating query examples",
-        ))
+        results = list(
+            tqdm(
+                pool.imap(_process_query, args_list, chunksize=64),
+                total=len(queries),
+                desc="Generating query examples",
+            )
+        )
 
     for mem, ctx_m, ctx_nm in results:
         mem_retrieval_examples.append(mem)
@@ -254,8 +268,10 @@ def process_and_save(
         "ctx_nomatch": ctx_nomatch_examples,
     }
     n_queries = len(queries)
-    print(f"  queries={n_queries}  docs={len(docs)}  raw: " +
-          "  ".join(f"{k}={len(v)}" for k, v in pool.items()))
+    print(
+        f"  queries={n_queries}  docs={len(docs)}  raw: "
+        + "  ".join(f"{k}={len(v)}" for k, v in pool.items())
+    )
     subsampled = {}
     for name, examples in pool.items():
         ratio = type_ratios.get(name, 1.0)

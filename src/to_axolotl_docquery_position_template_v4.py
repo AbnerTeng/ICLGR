@@ -41,7 +41,7 @@ import json
 import random
 import os
 from multiprocessing import Pool, cpu_count
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import numpy as np
 from tqdm import tqdm
@@ -52,20 +52,24 @@ from omegaconf import DictConfig
 
 # ── Template builder ──────────────────────────────────────────────────────
 
-def _build_ctx_prompt(context_docs: List[Dict], query_text: str, example: Optional[Dict] = None) -> str:
+
+def _build_ctx_prompt(
+    context_docs: List[Dict], query_text: str, example: Optional[Dict] = None
+) -> str:
     doc_blocks = []
     for i, doc in enumerate(context_docs):
         doc_blocks.append(
-            f"Document {i + 1}\n"
-            f"Text: {doc['text']}\n"
-            f"Identifier: {doc['item']}"
+            f"Document {i + 1}\nText: {doc['text']}\nIdentifier: {doc['item']}"
         )
     example_block = ""
     if example:
-        example_block = f"Example:\nQuery: {example['text']}\nAnswer: {example['item']}\n\n"
+        example_block = (
+            f"Example:\nQuery: {example['text']}\nAnswer: {example['item']}\n\n"
+        )
     return (
         "## Documents\n"
-        + "\n\n".join(doc_blocks) + "\n\n\n"
+        + "\n\n".join(doc_blocks)
+        + "\n\n\n"
         + "## Task\n"
         + example_block
         + f"Query: {query_text}\n"
@@ -81,16 +85,16 @@ def _build_answer(item: str, copy: bool = False) -> str:
 
 # ── Pattern generators ────────────────────────────────────────────────────
 
+
 def generate_zero_shot(target_query: Dict, example: Optional[Dict] = None) -> Dict:
     true_item = target_query["item"]
     example_block = ""
     if example:
-        example_block = f"Example:\nQuery: {example['text']}\nAnswer: {example['item']}\n\n"
+        example_block = (
+            f"Example:\nQuery: {example['text']}\nAnswer: {example['item']}\n\n"
+        )
     user_content = (
-        "## Task\n"
-        + example_block
-        + f"Query: {target_query['text']}\n"
-        + "Answer:"
+        "## Task\n" + example_block + f"Query: {target_query['text']}\n" + "Answer:"
     )
     return {
         "conversations": [
@@ -103,11 +107,7 @@ def generate_zero_shot(target_query: Dict, example: Optional[Dict] = None) -> Di
 
 def generate_zero_shot_indexing(target_doc: Dict) -> Dict:
     true_item = target_doc["item"]
-    user_content = (
-        "## Task\n"
-        f"Document: {target_doc['text']}\n"
-        "Answer:"
-    )
+    user_content = f"## Task\nDocument: {target_doc['text']}\nAnswer:"
     return {
         "conversations": [
             {"role": "user", "content": user_content},
@@ -151,12 +151,16 @@ def generate_doc_pos_front(
     if not pos_doc:
         return None
 
-    neg_docs = _pick_neg_docs(n_docs - 1, true_doc_id, pos_doc, eligible_docs, use_retrieval_hn)
+    neg_docs = _pick_neg_docs(
+        n_docs - 1, true_doc_id, pos_doc, eligible_docs, use_retrieval_hn
+    )
     if neg_docs is None:
         return None
     context_docs = [pos_doc] + neg_docs  # target FIRST
 
-    user_content = _build_ctx_prompt(context_docs, target_query["text"], example=example)
+    user_content = _build_ctx_prompt(
+        context_docs, target_query["text"], example=example
+    )
     return {
         "conversations": [
             {"role": "user", "content": user_content},
@@ -180,12 +184,16 @@ def generate_doc_pos_back(
     if not pos_doc:
         return None
 
-    neg_docs = _pick_neg_docs(n_docs - 1, true_doc_id, pos_doc, eligible_docs, use_retrieval_hn)
+    neg_docs = _pick_neg_docs(
+        n_docs - 1, true_doc_id, pos_doc, eligible_docs, use_retrieval_hn
+    )
     if neg_docs is None:
         return None
     context_docs = neg_docs + [pos_doc]  # target LAST
 
-    user_content = _build_ctx_prompt(context_docs, target_query["text"], example=example)
+    user_content = _build_ctx_prompt(
+        context_docs, target_query["text"], example=example
+    )
     return {
         "conversations": [
             {"role": "user", "content": user_content},
@@ -206,7 +214,9 @@ def generate_all_noise(
     true_doc_id = target_query["doc_id"]
     pos_doc = doc_id_to_doc.get(true_doc_id) if doc_id_to_doc else None
 
-    neg_docs = _pick_neg_docs(n_docs, true_doc_id, pos_doc, eligible_docs, use_retrieval_hn)
+    neg_docs = _pick_neg_docs(
+        n_docs, true_doc_id, pos_doc, eligible_docs, use_retrieval_hn
+    )
     if neg_docs is None:
         return None
     random.shuffle(neg_docs)
@@ -227,6 +237,7 @@ def generate_all_noise(
 
 
 # ── BM25 Hard Negative ───────────────────────────────────────────────────
+
 
 def build_hard_negative_map(
     queries: List[Dict],
@@ -292,29 +303,45 @@ def generate_all_noise_hard(
 
 # ── Multiprocessing worker ────────────────────────────────────────────────
 
+
 def _process_query(args):
     q, n_shot, doc_id_to_doc, eligible_docs, use_retrieval_hn, example = args
     front = generate_doc_pos_front(
-        q, n_docs=n_shot, doc_id_to_doc=doc_id_to_doc,
-        eligible_docs=eligible_docs, use_retrieval_hn=use_retrieval_hn, example=example,
+        q,
+        n_docs=n_shot,
+        doc_id_to_doc=doc_id_to_doc,
+        eligible_docs=eligible_docs,
+        use_retrieval_hn=use_retrieval_hn,
+        example=example,
     )
     back = generate_doc_pos_back(
-        q, n_docs=n_shot, doc_id_to_doc=doc_id_to_doc,
-        eligible_docs=eligible_docs, use_retrieval_hn=use_retrieval_hn, example=example,
+        q,
+        n_docs=n_shot,
+        doc_id_to_doc=doc_id_to_doc,
+        eligible_docs=eligible_docs,
+        use_retrieval_hn=use_retrieval_hn,
+        example=example,
     )
     noise = generate_all_noise(
-        q, n_docs=n_shot, eligible_docs=eligible_docs,
-        doc_id_to_doc=doc_id_to_doc, use_retrieval_hn=use_retrieval_hn, example=example,
+        q,
+        n_docs=n_shot,
+        eligible_docs=eligible_docs,
+        doc_id_to_doc=doc_id_to_doc,
+        use_retrieval_hn=use_retrieval_hn,
+        example=example,
     )
     return front, back, noise
 
 
 def _process_noise_only(args):
     q, n_shot, eligible_docs, example = args
-    return generate_all_noise(q, n_docs=n_shot, eligible_docs=eligible_docs, example=example)
+    return generate_all_noise(
+        q, n_docs=n_shot, eligible_docs=eligible_docs, example=example
+    )
 
 
 # ── Pipeline ──────────────────────────────────────────────────────────────
+
 
 def subsample(examples: List, target_n: int) -> List:
     if len(examples) <= target_n:
@@ -348,22 +375,32 @@ def process_and_save(
 
     if retrieval_hard_neg:
         n_with_hn = sum(1 for d in train_docs if d.get("hard_negatives"))
-        print(f"  retrieval_hard_neg=True  ({n_with_hn}/{len(train_docs)} docs have hard_negatives)")
+        print(
+            f"  retrieval_hard_neg=True  ({n_with_hn}/{len(train_docs)} docs have hard_negatives)"
+        )
 
     example_pool = queries
     args_list = [
-        (q, n_shot, doc_id_to_doc, eligible_docs, retrieval_hard_neg,
-         random.choice([x for x in example_pool if x["doc_id"] != q["doc_id"]]))
+        (
+            q,
+            n_shot,
+            doc_id_to_doc,
+            eligible_docs,
+            retrieval_hard_neg,
+            random.choice([x for x in example_pool if x["doc_id"] != q["doc_id"]]),
+        )
         for q in queries
     ]
 
     n_workers = max(1, cpu_count() - 1)
     with Pool(processes=n_workers) as pool:
-        results = list(tqdm(
-            pool.imap(_process_query, args_list, chunksize=64),
-            total=len(queries),
-            desc="Generating examples",
-        ))
+        results = list(
+            tqdm(
+                pool.imap(_process_query, args_list, chunksize=64),
+                total=len(queries),
+                desc="Generating examples",
+            )
+        )
 
     buckets: Dict[str, List] = {
         "doc_pos_front": [],
@@ -380,19 +417,27 @@ def process_and_save(
 
     # Replace all_noise with stage1 queries but use train_docs as noise pool (same distribution as test)
     if zs_noise and zs_docs is not None and zs_queries is not None:
-        print(f"  Generating all_noise from stage1 queries ({len(zs_queries)} queries), noise docs from train ({len(eligible_docs)} docs)...")
+        print(
+            f"  Generating all_noise from stage1 queries ({len(zs_queries)} queries), noise docs from train ({len(eligible_docs)} docs)..."
+        )
         buckets["all_noise"] = []
         zs_noise_args = [
-            (q, n_shot, eligible_docs,
-             random.choice([x for x in example_pool if x["doc_id"] != q["doc_id"]]))
+            (
+                q,
+                n_shot,
+                eligible_docs,
+                random.choice([x for x in example_pool if x["doc_id"] != q["doc_id"]]),
+            )
             for q in zs_queries
         ]
         with Pool(processes=n_workers) as pool:
-            zs_noise_results = list(tqdm(
-                pool.imap(_process_noise_only, zs_noise_args, chunksize=256),
-                total=len(zs_queries),
-                desc="Generating stage1 all_noise",
-            ))
+            zs_noise_results = list(
+                tqdm(
+                    pool.imap(_process_noise_only, zs_noise_args, chunksize=256),
+                    total=len(zs_queries),
+                    desc="Generating stage1 all_noise",
+                )
+            )
         buckets["all_noise"] = [ex for ex in zs_noise_results if ex is not None]
         print(f"  stage1 all_noise: {len(buckets['all_noise'])} examples")
 
@@ -400,8 +445,10 @@ def process_and_save(
     if hard_negative:
         hn_queries = zs_queries if (zs_noise and zs_queries is not None) else queries
         hn_docs = train_docs
-        hard_neg_map = build_hard_negative_map(hn_queries, hn_docs, top_k=hard_negative_k)
-        print(f"  Generating hard negative all_noise...")
+        hard_neg_map = build_hard_negative_map(
+            hn_queries, hn_docs, top_k=hard_negative_k
+        )
+        print("  Generating hard negative all_noise...")
         buckets["all_noise"] = []
         for q in tqdm(hn_queries, desc="Hard negative all_noise"):
             key = q["doc_id"] + "||" + q["text"]
@@ -418,7 +465,9 @@ def process_and_save(
     stage1_retrieval = [
         generate_zero_shot(
             q,
-            example=random.choice([x for x in example_pool if x["doc_id"] != q["doc_id"]]),
+            example=random.choice(
+                [x for x in example_pool if x["doc_id"] != q["doc_id"]]
+            ),
         )
         for q in _zs_queries
     ]
@@ -437,8 +486,10 @@ def process_and_save(
         buckets["stage1_retrieval"] = stage1_retrieval
         buckets["stage1_indexing"] = stage1_indexing
 
-    print(f"  queries={n_queries}  raw: " +
-          "  ".join(f"{k}={len(v)}" for k, v in buckets.items()))
+    print(
+        f"  queries={n_queries}  raw: "
+        + "  ".join(f"{k}={len(v)}" for k, v in buckets.items())
+    )
 
     subsampled: Dict[str, List] = {}
     for name, examples in buckets.items():
@@ -454,7 +505,9 @@ def process_and_save(
             if name in subsampled and factor > 1:
                 original = subsampled[name]
                 subsampled[name] = original * factor
-                print(f"  oversample {name}: {len(original)} x {factor} = {len(subsampled[name])}")
+                print(
+                    f"  oversample {name}: {len(original)} x {factor} = {len(subsampled[name])}"
+                )
 
     all_examples = [ex for exs in subsampled.values() for ex in exs]
     random.shuffle(all_examples)
@@ -470,7 +523,12 @@ def process_and_save(
 
 # ── Entry point ───────────────────────────────────────────────────────────
 
-@hydra.main(config_path="../configs", config_name="get_docquery_position_template_v4", version_base=None)
+
+@hydra.main(
+    config_path="../configs",
+    config_name="get_docquery_position_template_v4",
+    version_base=None,
+)
 def main(cfg: DictConfig):
     dataset = load_dataset(
         "json",
@@ -480,6 +538,7 @@ def main(cfg: DictConfig):
             "icl_test": f"{cfg.input_path}/icl_test.jsonl",
         },
     )
+
     def _alias_item(row):
         if "item" not in row:
             row["item"] = row["doc_id"]
@@ -490,8 +549,12 @@ def main(cfg: DictConfig):
             hn["item"] = hn["item"].lower()
         return row
 
-    train_docs = [_alias_item(s) for s in dataset["train"] if s["operation"] == "indexing"]
-    train_queries = [_alias_item(s) for s in dataset["train"] if s["operation"] == "query"]
+    train_docs = [
+        _alias_item(s) for s in dataset["train"] if s["operation"] == "indexing"
+    ]
+    train_queries = [
+        _alias_item(s) for s in dataset["train"] if s["operation"] == "query"
+    ]
 
     zs_docs: Optional[List] = None
     zs_queries: Optional[List] = None
@@ -526,8 +589,14 @@ def main(cfg: DictConfig):
         queries_pool = train_queries
 
         if split == "icl_test":
-            docs_pool = [_alias_item(s) for s in dataset["icl_test"] if s["operation"] == "indexing"]
-            queries_pool = [_alias_item(s) for s in dataset["icl_test"] if s["operation"] == "query"]
+            docs_pool = [
+                _alias_item(s)
+                for s in dataset["icl_test"]
+                if s["operation"] == "indexing"
+            ]
+            queries_pool = [
+                _alias_item(s) for s in dataset["icl_test"] if s["operation"] == "query"
+            ]
 
         split_zs_docs = zs_docs if split == "train" else None
         split_zs_queries = zs_queries if split == "train" else None
@@ -538,13 +607,20 @@ def main(cfg: DictConfig):
         hard_neg_k = cfg.get("hard_negative_k", 20)
         use_retrieval_hn = cfg.get("retrieval_hard_neg", False) and split == "train"
         if use_hard_neg and use_retrieval_hn:
-            raise ValueError("hard_negative (BM25) and retrieval_hard_neg cannot both be true")
+            raise ValueError(
+                "hard_negative (BM25) and retrieval_hard_neg cannot both be true"
+            )
 
         out_file = f"{cfg.output_dir}/{split}_{cfg.n_shot}shot.jsonl"
         process_and_save(
-            docs_pool, queries_pool, dataset[split], out_file,
-            cfg.n_shot, dict(cfg.type_ratios),
-            zs_docs=split_zs_docs, zs_queries=split_zs_queries,
+            docs_pool,
+            queries_pool,
+            dataset[split],
+            out_file,
+            cfg.n_shot,
+            dict(cfg.type_ratios),
+            zs_docs=split_zs_docs,
+            zs_queries=split_zs_queries,
             oversample=oversample_cfg,
             zs_noise=use_zs_noise,
             hard_negative=use_hard_neg,

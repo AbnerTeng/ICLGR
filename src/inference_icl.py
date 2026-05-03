@@ -259,7 +259,9 @@ class DecoderInference:
         if max_samples:
             test_data = test_data[:max_samples]
 
-        logger.info(f"Evaluating on {len(test_data)} samples (batch_size={batch_size})...")
+        logger.info(
+            f"Evaluating on {len(test_data)} samples (batch_size={batch_size})..."
+        )
 
         hit_at_1 = 0
         hit_at_10 = 0
@@ -267,6 +269,7 @@ class DecoderInference:
         predictions = []
 
         from collections import defaultdict
+
         pattern_hits = defaultdict(lambda: {"hit_at_1": 0, "hit_at_10": 0, "total": 0})
 
         pbar = tqdm(range(0, total, batch_size), desc="Evaluating")
@@ -285,48 +288,53 @@ class DecoderInference:
                     prompts.append(
                         f"<|im_start|>user\n{item['conversations'][0]['content']}<|im_end|>\n<|im_start|>assistant\n"
                     )
-                    true_docids.append(self._clean_docid(item["conversations"][1]["content"]))
+                    true_docids.append(
+                        self._clean_docid(item["conversations"][1]["content"])
+                    )
 
             predicted_docids = self.generate_docid(text)
             logger.debug(
                 f"Predicted_docids: {predicted_docids}, True_docid: {true_docid}"
             )
 
-                true_docid_normalized = str(true_docid).strip()
-                predicted_docids_normalized = [str(p).strip() for p in predicted_docids]
+            true_docid_normalized = str(true_docid).strip()
+            predicted_docids_normalized = [str(p).strip() for p in predicted_docids]
 
-                is_hit_1 = true_docid_normalized == predicted_docids_normalized[0]
-                is_hit_10 = true_docid_normalized in predicted_docids_normalized
+            is_hit_1 = true_docid_normalized == predicted_docids_normalized[0]
+            is_hit_10 = true_docid_normalized in predicted_docids_normalized
 
-                if is_hit_1:
-                    hit_at_1 += 1
-                if is_hit_10:
-                    hit_at_10 += 1
+            if is_hit_1:
+                hit_at_1 += 1
+            if is_hit_10:
+                hit_at_10 += 1
 
-                pattern = (item.get("metadata") or {}).get("pattern", "unknown")
-                pattern_hits[pattern]["total"] += 1
-                if is_hit_1:
-                    pattern_hits[pattern]["hit_at_1"] += 1
-                if is_hit_10:
-                    pattern_hits[pattern]["hit_at_10"] += 1
+            pattern = (item.get("metadata") or {}).get("pattern", "unknown")
+            pattern_hits[pattern]["total"] += 1
+            if is_hit_1:
+                pattern_hits[pattern]["hit_at_1"] += 1
+            if is_hit_10:
+                pattern_hits[pattern]["hit_at_10"] += 1
 
-                predictions.append(
-                    {
-                        "text": text,
-                        "true_docid": true_docid,
-                        "predicted_docid": predicted_docids,
-                        "hit_at_1": is_hit_1,
-                        "hit_at_10": is_hit_10,
-                        "metadata": item.get("metadata"),
-                    }
-                )
+            predictions.append(
+                {
+                    "text": text,
+                    "true_docid": true_docid,
+                    "predicted_docid": predicted_docids,
+                    "hit_at_1": is_hit_1,
+                    "hit_at_10": is_hit_10,
+                    "metadata": item.get("metadata"),
+                }
+            )
 
             idx = len(predictions)
-            postfix = {"Hit@1": f"{hit_at_1/idx:.2f}", "Hit@10": f"{hit_at_10/idx:.2f}"}
+            postfix = {
+                "Hit@1": f"{hit_at_1 / idx:.2f}",
+                "Hit@10": f"{hit_at_10 / idx:.2f}",
+            }
             for pat, counts in sorted(pattern_hits.items()):
                 n = counts["total"]
-                postfix[f"{pat}/H@1"] = f"{counts['hit_at_1']/n:.2f}"
-                postfix[f"{pat}/H@10"] = f"{counts['hit_at_10']/n:.2f}"
+                postfix[f"{pat}/H@1"] = f"{counts['hit_at_1'] / n:.2f}"
+                postfix[f"{pat}/H@10"] = f"{counts['hit_at_10'] / n:.2f}"
             pbar.set_postfix(postfix)
 
         hit_at_1_score = hit_at_1 / total

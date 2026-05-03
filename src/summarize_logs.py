@@ -48,7 +48,9 @@ def parse_log(log_path: str) -> dict:
             m = re.match(r"^\[(\d+)/(\d+)\]\s+pattern=(\w+)", line)
             if m:
                 current_pattern = m.group(3)
-                stats = pattern_counts.setdefault(current_pattern, {"n": 0, "copy_top1": 0})
+                stats = pattern_counts.setdefault(
+                    current_pattern, {"n": 0, "copy_top1": 0}
+                )
                 stats["n"] += 1
                 continue
 
@@ -106,7 +108,7 @@ def main():
     short_groups = {g for g in groups if "stage1" in g}
 
     W = 20  # model name width
-    C = 8   # metric column width
+    C = 8  # metric column width
     SEP = " | "
 
     all_tsv = []
@@ -120,14 +122,14 @@ def main():
             for pat in patterns:
                 short = pat.replace("doc_pos_", "").replace("all_noise", "noise")
                 hdr += (
-                    f"{SEP}{short+'/H@1':>{C}} {short+'/H@10':>{C}} "
-                    f"{short+'/cp@1%':>{C}} {short+'/beam_cp%':>{C}}"
+                    f"{SEP}{short + '/H@1':>{C}} {short + '/H@10':>{C}} "
+                    f"{short + '/cp@1%':>{C}} {short + '/beam_cp%':>{C}}"
                 )
         line_w = len(hdr)
 
-        print(f"\n{'='*line_w}")
+        print(f"\n{'=' * line_w}")
         print(f"  {group_name}")
-        print(f"{'='*line_w}")
+        print(f"{'=' * line_w}")
         print(hdr)
         print("-" * line_w)
 
@@ -137,7 +139,12 @@ def main():
         if not is_short:
             for pat in patterns:
                 short = pat.replace("doc_pos_", "").replace("all_noise", "noise")
-                tsv_hdr_parts += [f"{short}/H@1", f"{short}/H@10", f"{short}/cp@1%", f"{short}/beam_cp%"]
+                tsv_hdr_parts += [
+                    f"{short}/H@1",
+                    f"{short}/H@10",
+                    f"{short}/cp@1%",
+                    f"{short}/beam_cp%",
+                ]
         all_tsv.append(f"\n{group_name}")
         all_tsv.append(T.join(tsv_hdr_parts))
 

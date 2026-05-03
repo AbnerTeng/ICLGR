@@ -3,6 +3,7 @@
 Pool = train.jsonl indexing rows. Gold doc_id excluded. Output writes
 hard_negatives = [{"doc_id", "text"}, ...] alongside original fields.
 """
+
 import argparse
 import json
 import random
@@ -57,7 +58,9 @@ def main():
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--batch_size", type=int, default=256)
     ap.add_argument("--device", default="cuda:2")
-    ap.add_argument("--files", nargs="+", default=["train.jsonl", "test.jsonl", "icl_test.jsonl"])
+    ap.add_argument(
+        "--files", nargs="+", default=["train.jsonl", "test.jsonl", "icl_test.jsonl"]
+    )
     args = ap.parse_args()
     random.seed(args.seed)
 
@@ -85,7 +88,9 @@ def main():
 
     # 3. Per-file: only embed/search INDEXING rows; query rows pass through unchanged
     sample_mode = args.pool_depth > args.k
-    retrieve_k = max(args.pool_depth, args.k) + args.skip_top + 8  # extra buffer for gold filtering
+    retrieve_k = (
+        max(args.pool_depth, args.k) + args.skip_top + 8
+    )  # extra buffer for gold filtering
     print(
         f"Mode: {'SAMPLE' if sample_mode else 'TOP-K'}  "
         f"k={args.k} pool_depth={args.pool_depth} skip_top={args.skip_top} retrieve={retrieve_k}"
@@ -103,7 +108,9 @@ def main():
                 anchor_emb = pool_emb
             else:
                 print(f"Embedding {len(idx_rows)} indexing anchors...")
-                anchor_emb = embed(model, [r["text"] for r in idx_rows], args.batch_size, device)
+                anchor_emb = embed(
+                    model, [r["text"] for r in idx_rows], args.batch_size, device
+                )
 
             print(f"Searching top-{retrieve_k}...")
             D, I = index.search(anchor_emb, retrieve_k)
@@ -116,7 +123,9 @@ def main():
                     # Sample k from [skip_top : pool_depth] (post gold-filter)
                     window = cands[args.skip_top : args.skip_top + args.pool_depth]
                     if len(window) < args.k:
-                        window = cands[: args.skip_top + args.pool_depth]  # fallback: expand
+                        window = cands[
+                            : args.skip_top + args.pool_depth
+                        ]  # fallback: expand
                     picks = random.sample(window, min(args.k, len(window)))
                 else:
                     picks = cands[: args.k]

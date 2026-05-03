@@ -6,6 +6,7 @@ HN dataset provides per-doc hard_negatives (keyed by original-case title).
 Join: pseudo.item (title) == hn.doc_id (title)
 Output: data/<dst_dir>/ with train.jsonl, test.jsonl, icl_test.jsonl.
 """
+
 import argparse
 import json
 import shutil
@@ -14,7 +15,10 @@ from pathlib import Path
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--pseudo_file", default="data/msmarco_text-with_pseudo_query-100k-gr/train_with_pseudo.jsonl")
+    ap.add_argument(
+        "--pseudo_file",
+        default="data/msmarco_text-with_pseudo_query-100k-gr/train_with_pseudo.jsonl",
+    )
     ap.add_argument("--hn_dir", default="data/msmarco-item-id-hardneg")
     ap.add_argument("--dst_dir", default="data/msmarco-pseudo-hardneg")
     args = ap.parse_args()
@@ -56,7 +60,9 @@ def main():
             fout.write(json.dumps(r, ensure_ascii=False) + "\n")
 
     print(f"Wrote {dst_dir / 'train.jsonl'}")
-    print(f"  queries={n_queries}  indexing={n_indexing}  attached={n_attached}  missing={n_missing}")
+    print(
+        f"  queries={n_queries}  indexing={n_indexing}  attached={n_attached}  missing={n_missing}"
+    )
 
     # 3. Copy test.jsonl and icl_test.jsonl from HN dir (template loader requires all 3)
     for fname in ["test.jsonl", "icl_test.jsonl"]:

@@ -2,7 +2,7 @@ import os
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import hydra
 from omegaconf import DictConfig
@@ -88,7 +88,9 @@ class DecoderInference:
                 self.model_path, padding_side="left", trust_remote_code=True
             )
             if any(token.startswith("<|d") for token in tokenizer.get_vocab().keys()):
-                logger.info(f"[GPU {self.gpu_id}] Detected semantic docid tokens, vocab size: {len(tokenizer)}")
+                logger.info(
+                    f"[GPU {self.gpu_id}] Detected semantic docid tokens, vocab size: {len(tokenizer)}"
+                )
         except Exception as e:
             logger.warning(f"[GPU {self.gpu_id}] Falling back to base tokenizer: {e}")
             tokenizer = AutoTokenizer.from_pretrained(
@@ -114,7 +116,9 @@ class DecoderInference:
         except Exception:
             load_kwargs.pop("attn_implementation")
             model = AutoModelForCausalLM.from_pretrained(self.model_path, **load_kwargs)
-            logger.info(f"[GPU {self.gpu_id}] Flash Attention 2 unavailable, using default")
+            logger.info(
+                f"[GPU {self.gpu_id}] Flash Attention 2 unavailable, using default"
+            )
 
         model.eval()
 
@@ -197,7 +201,9 @@ class DecoderInference:
         return results
 
     @torch.no_grad()
-    def generate_docid(self, text: str, context: Optional[List[str]] = None) -> List[str]:
+    def generate_docid(
+        self, text: str, context: Optional[List[str]] = None
+    ) -> List[str]:
         return self.generate_docids_batch([text], [context])[0]
 
     def _clean_docid(self, docid: str) -> str:
@@ -208,7 +214,9 @@ class DecoderInference:
         docid = docid.replace("<|im_end|>", "").replace("<|im_start|>", "")
 
         if "<think>" in docid:
-            match = re.search(r"</think>\s*(.*?)(?:<|im_end|>|</s>|$)", docid, re.DOTALL)
+            match = re.search(
+                r"</think>\s*(.*?)(?:<|im_end|>|</s>|$)", docid, re.DOTALL
+            )
             if match:
                 docid = match.group(1).strip()
 
@@ -243,7 +251,9 @@ class DecoderInference:
         if max_samples:
             test_data = test_data[:max_samples]
 
-        logger.info(f"Evaluating on {len(test_data)} samples (batch_size={batch_size})...")
+        logger.info(
+            f"Evaluating on {len(test_data)} samples (batch_size={batch_size})..."
+        )
 
         hit_at_1 = 0
         hit_at_10 = 0
@@ -280,20 +290,24 @@ class DecoderInference:
                     hit_at_1 += 1
                 if is_hit_10:
                     hit_at_10 += 1
-                predictions_sorted.append({
-                    "text": text,
-                    "true_docid": true_docid,
-                    "predicted_docid": predicted_docids,
-                    "hit_at_1": is_hit_1,
-                    "hit_at_10": is_hit_10,
-                    "metadata": item.get("metadata"),
-                })
+                predictions_sorted.append(
+                    {
+                        "text": text,
+                        "true_docid": true_docid,
+                        "predicted_docid": predicted_docids,
+                        "hit_at_1": is_hit_1,
+                        "hit_at_10": is_hit_10,
+                        "metadata": item.get("metadata"),
+                    }
+                )
 
             done = min(batch_start + batch_size, len(data))
-            pbar.set_postfix({
-                "Hit@1": f"{hit_at_1/done:.4f}",
-                "Hit@10": f"{hit_at_10/done:.4f}",
-            })
+            pbar.set_postfix(
+                {
+                    "Hit@1": f"{hit_at_1 / done:.4f}",
+                    "Hit@10": f"{hit_at_10 / done:.4f}",
+                }
+            )
 
         # Restore sorted order
         predictions = [None] * len(data)
@@ -314,7 +328,9 @@ class DecoderInference:
         if max_samples:
             test_data = test_data[:max_samples]
 
-        logger.info(f"Evaluating on {len(test_data)} samples (batch_size={batch_size})...")
+        logger.info(
+            f"Evaluating on {len(test_data)} samples (batch_size={batch_size})..."
+        )
         hit_at_1, hit_at_10, predictions = self._evaluate_data(test_data, batch_size)
         total = len(test_data)
 
@@ -334,6 +350,7 @@ class DecoderInference:
 # ---------------------------------------------------------------------------
 # Multi-GPU worker (must be top-level for pickle)
 # ---------------------------------------------------------------------------
+
 
 def _mp_worker(
     gpu_id: int,
@@ -373,7 +390,9 @@ def evaluate_multi_gpu(
         test_data = test_data[:max_samples]
 
     n_gpus = torch.cuda.device_count()
-    logger.info(f"Running data-parallel inference on {n_gpus} GPUs, {len(test_data)} samples")
+    logger.info(
+        f"Running data-parallel inference on {n_gpus} GPUs, {len(test_data)} samples"
+    )
 
     # Split data into n_gpus chunks, preserving original indices for reassembly
     chunks = [[] for _ in range(n_gpus)]
@@ -437,7 +456,10 @@ def evaluate_multi_gpu(
 # Entry point
 # ---------------------------------------------------------------------------
 
-@hydra.main(config_path="../configs", config_name="inference_batch_conf", version_base=None)
+
+@hydra.main(
+    config_path="../configs", config_name="inference_batch_conf", version_base=None
+)
 def main(cfg: DictConfig) -> int:
     max_samples = cfg.max_samples if cfg.max_samples > 0 else None
     batch_size = cfg.get("batch_size", 8)
