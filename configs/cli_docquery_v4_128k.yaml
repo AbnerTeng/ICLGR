@@ -6,9 +6,9 @@ num_return: 10
 max_new_tokens: 50
 no_trie: false
 mode: "file"
-query_file: "./data/msmarco-item-id-lower/test.jsonl"
+# query_file: "./data/msmarco-item-id-lower/test.jsonl"
 # query_file: "./data/msmarco-item-id-3shot-v4_128k/icl_test_3shot.jsonl"
-# query_file: "./data/msmarco-item-id-3shot-v4_128k/test_3shot.jsonl"
+query_file: "./data/msmarco-item-id-3shot-v4_128k/test_3shot.jsonl"
 max_samples: 1000
 
 # /mnt/raid0/home/lalako/ICLGR/data/msmarco-item-id-3shot-v4_128k/test_3shot.jsonl
