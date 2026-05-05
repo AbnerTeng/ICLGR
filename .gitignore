@@ -60,4 +60,5 @@ src/check_coverage.py
 src/download_hf_dataset.py
 src/compare_datasets.py
 src/analyze_pseudo_queries.py
+claude.md
 hold_gpu.py

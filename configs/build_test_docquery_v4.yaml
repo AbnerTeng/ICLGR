@@ -1,0 +1,5 @@
+input_path: "./data/msmarco-item-id"
+output_dir: "./data/msmarco-item-id-3shot-v4_128k"
+n_shot: 10
+seed: 42
+splits: ["test", "icl_test"]
