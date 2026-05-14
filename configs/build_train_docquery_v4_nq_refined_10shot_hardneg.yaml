@@ -1,0 +1,7 @@
+input_path: "./data/nq-item-id-llm-refined-hardneg"
+output_dir: "./data/nq-item-id-llm-refined-hardneg-10shot-v4"
+n_shot: 10
+n_examples: 3
+seed: 42
+splits: ["train"]
+retrieval_hard_neg: true

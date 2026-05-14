@@ -3,5 +3,5 @@ output_dir: "./data/msmarco-item-id-hardneg-100shot-v4"
 n_shot: 100
 n_examples: 3
 seed: 42
-splits: ["test", "icl_test"]
+splits: ["train"]
 retrieval_hard_neg: true

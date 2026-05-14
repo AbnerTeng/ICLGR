@@ -55,6 +55,7 @@ class DecoderInferenceWithTag:
         processor_type: ProcessorType = "base",
         base_model_path: Optional[str] = None,
         hf_corpus: Optional[str] = None,
+        id_field: str = "doc_id",
     ) -> None:
         self.model_path = model_path if from_hf else Path(model_path)
         self.base_model_path = base_model_path
@@ -62,6 +63,7 @@ class DecoderInferenceWithTag:
         self.new_data_path = new_data_path
         self.hf_corpus = hf_corpus
         self.processor_type = processor_type
+        self.id_field = id_field
         self.device = torch.device("cuda")
 
         logger.info(f"Loading model from: {self.model_path}")
@@ -123,7 +125,7 @@ class DecoderInferenceWithTag:
         if self.new_data_path:
             files.append(self.new_data_path)
         return build_semantic_docid_trie(
-            files, self.tokenizer, id_field="item", leading_space=leading_space
+            files, self.tokenizer, id_field=self.id_field, leading_space=leading_space
         )
 
     def _build_trie_from_hf(
@@ -410,6 +412,7 @@ def main(cfg: DictConfig) -> int:
         if cfg.base_model_path
         else None,
         hf_corpus=cfg.get("hf_corpus", None) or None,
+        id_field=cfg.get("id_field", "doc_id"),
     )
 
     if not os.path.exists(output_file):
