@@ -1,12 +1,13 @@
 model_path: "Abner0803/Qwen3-1.7B-msmarco-text-100k-with_pseudo_queries"
-train_file: "./data/msmarco-ICL-100k-text-docid/train.jsonl"
-new_file: "./data/msmarco-ICL-100k-text-docid/icl_test.jsonl"
+train_file: "./data/msmarco_text/train.jsonl"
+new_file: "./data/msmarco_text/icl_test.jsonl"
 num_beams: 10
 num_return: 10
 max_new_tokens: 50
 no_trie: false
-mode: "file"
-query_file: "./data/msmarco-ICL-100k-text-docid/test.jsonl"
-max_samples: 50
+test_file: "./data/msmarco_text_axolotl/icl_test_query_axolotl.jsonl"
+max_samples: -1
+output_file: "./retrieve_results/msmarco-stage1-icl_test_query.json"
 
-# CUDA_VISIBLE_DEVICES=2 python -m src.cli_docquery --config-name inference_stage1
+# CUDA_VISIBLE_DEVICES=0 python -m src.inference --config-name inference_stage1
+

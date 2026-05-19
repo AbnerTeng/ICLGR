@@ -1,0 +1,12 @@
+model_path: "./checkpoint/Qwen3-1.7B-nq-text-title-with_pseudo-lr1e-4-10epochs/checkpoint-1128"
+train_file: "./data/nq_text_title/train.jsonl"
+new_file: "./data/nq_text_title/icl_test.jsonl"
+num_beams: 10
+num_return: 10
+max_new_tokens: 50
+no_trie: false
+test_file: "./data/nq_text_title/test.jsonl"
+max_samples: 1000
+output_file: "./retrieve_results/nq-text-title-stage1-10epochs-ckpt1128.json"
+
+# CUDA_VISIBLE_DEVICES=0 python -m src.inference --config-name inference_stage1_nq

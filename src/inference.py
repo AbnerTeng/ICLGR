@@ -1,11 +1,12 @@
 import os
 import json
 import logging
-from argparse import ArgumentParser, Namespace
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import torch
+import hydra
+from omegaconf import DictConfig
 from tqdm import tqdm
 from transformers import (
     AutoTokenizer,
@@ -21,143 +22,91 @@ from .inference_utils import (
 )
 from .metrics import GRMetrics
 
-os.environ.setdefault("CUDA_VISIBLE_DEVICES", "0")
 os.environ.setdefault("NCCL_P2P_DISABLE", "1")
 os.environ.setdefault("NCCL_IB_DISABLE", "1")
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.FileHandler("stage-1_decoder_inference_title.log"),
-        logging.StreamHandler(),
-    ],
-)
 logger = logging.getLogger(__name__)
 
 
 class DecoderInference:
-    """
-    Inference class for decoder-only models trained on docid generation task.
-
-    Supports semantic docid tokens:
-    - Semantic: "<|d0_253|> <|d1_56|> <|d2_174|>"
-
-    For semantic docids, the model must be trained with semantic tokens
-    added as special tokens (see config/axolotl_semantic_docids.yml).
-    """
+    """Inference class for decoder-only models trained on docid generation task."""
 
     def __init__(
         self,
         model_path: str,
         from_hf: bool,
         train_data_path: str,
+        num_beams: int = 10,
+        num_return: int = 10,
+        max_new_tokens: int = 50,
         device: str = "cuda",
         base_model_path: Optional[str] = None,
     ) -> None:
-        if from_hf:
-            self.model_path = model_path
-        else:
-            self.model_path = Path(model_path)
-
+        self.model_path = model_path if from_hf else Path(model_path)
         self.base_model_path = base_model_path
         self.train_data_path = train_data_path
-        self.device = self._setup_device(device)
+        self.num_beams = num_beams
+        self.num_return = num_return
+        self.max_new_tokens = max_new_tokens
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        logger.info("Initializing Decoder Inference...")
         logger.info(f"Loading model from: {self.model_path}")
-
         self.tokenizer = self._load_tokenizer()
         self.model = self._load_model()
         self.trie_root = self._build_trie()
         self.generation_config = self._setup_generation_config()
-
         logger.info("Model loaded successfully!")
 
-    def _setup_device(self, device: str) -> torch.device:
-        """Setup the computation device."""
-        return torch.device("cuda")
-
     def _load_tokenizer(self) -> AutoTokenizer:
-        """Load the tokenizer with special semantic tokens if present."""
         try:
             tokenizer = AutoTokenizer.from_pretrained(
                 self.model_path, padding_side="left", trust_remote_code=True
             )
-            logger.info(f"Loaded tokenizer from {self.model_path}")
-
             if any(token.startswith("<|d") for token in tokenizer.get_vocab().keys()):
                 logger.info("Detected semantic docid tokens in vocabulary")
-                logger.info(f"Vocabulary size: {len(tokenizer)}")
-
         except Exception as e:
             logger.warning(f"Loading tokenizer from base Qwen model due to: {e}")
             tokenizer = AutoTokenizer.from_pretrained(
                 "Qwen/Qwen3-1.7B", padding_side="left", trust_remote_code=True
             )
-
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
-
         return tokenizer
 
     def _load_model(self) -> AutoModelForCausalLM:
-        """Load the trained model."""
         model = AutoModelForCausalLM.from_pretrained(
             self.model_path,
-            torch_dtype=(
-                torch.float16 if self.device.type == "cuda" else torch.float32
-            ),
+            torch_dtype=torch.float16 if self.device.type == "cuda" else torch.float32,
             device_map="auto" if self.device.type == "cuda" else None,
         )
         model.eval()
-
         return model
 
     def _build_trie(self) -> TrieNode:
-        """Build the trie from training data."""
         logger.info("Building semantic docid trie...")
-        trie_root = build_semantic_docid_trie(
-            self.train_data_path,
-            self.tokenizer,
-        )
-        return trie_root
+        return build_semantic_docid_trie(self.train_data_path, self.tokenizer)
 
     def _create_logits_processor(self, prompt_length: int) -> LogitsProcessorList:
-        """Create a logits processor with specific prompt length for the current batch."""
         processor = TrieConstrainedLogitsProcessor(
             self.trie_root, prompt_length, self.tokenizer.eos_token_id
         )
         return LogitsProcessorList([processor])
 
     def _setup_generation_config(self) -> GenerationConfig:
-        """Setup generation configuration for docid generation."""
         return GenerationConfig(
-            max_new_tokens=50,
+            max_new_tokens=self.max_new_tokens,
             do_sample=False,
             pad_token_id=self.tokenizer.pad_token_id,
             eos_token_id=self.tokenizer.eos_token_id,
-            num_beams=10,
-            num_return_sequences=10,
+            num_beams=self.num_beams,
+            num_return_sequences=self.num_return,
         )
 
     @torch.no_grad()
-    def generate_docid(self, text: str) -> List[str] | str:
-        """
-        Generate document ID for given text.
-
-        Args:
-            text: Input text (document or question)
-
-        Returns:
-            Generated document ID(s) as string or list of strings.
-            For semantic docids, returns format like "<|d0_253|> <|d1_56|> <|d2_174|>"
-        """
+    def generate_docid(self, text: str) -> List[str]:
         inputs_str = f"<|im_start|>user\n{text}<|im_end|>\n<|im_start|>assistant\n"
         inputs = self.tokenizer.encode(inputs_str, return_tensors="pt").to(self.device)
-        # Create logits processor with the actual prompt length for this input
         prompt_length = inputs.shape[1]
-
         logits_processor = self._create_logits_processor(prompt_length)
         outputs = self.model.generate(
             inputs,
@@ -166,65 +115,33 @@ class DecoderInference:
         )
         generated_ids = [output_ids[prompt_length:] for output_ids in outputs]
         response = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=False)
-
-        if len(response) == 1:
-            raise ValueError("Expected multiple generated docids for retrieval task.")
-        else:
-            cleaned_response = [self._clean_docid(resp) for resp in response]
-
-        return cleaned_response
+        return [self._clean_docid(r) for r in response]
 
     def _clean_docid(self, docid: str) -> str:
-        """
-        Clean the generated docid string to extract only semantic tokens.
-
-        For semantic docids: extracts and preserves only <|dX_Y|> tokens
-        For numeric docids: removes <| and |> delimiters
-
-        Args:
-            docid: Raw docid string from model
-
-        Returns:
-            Cleaned docid string containing only semantic tokens
-        """
         import re
 
         docid = docid.strip()
-        docid = docid.replace("</s>", "").replace("<|endoftext|>", "")
-        docid = docid.replace("<|im_end|>", "").replace("<|im_start|>", "")
+        for tok in ("</s>", "<|endoftext|>", "<|im_end|>", "<|im_start|>"):
+            docid = docid.replace(tok, "")
 
         if "<think>" in docid:
             match = re.search(
-                r"</think>\s*(.*?)(?:<|im_end|>|</s>|$)", docid, re.DOTALL
+                r"</think>\s*(.*?)(?:<\|im_end\|>|</s>|$)", docid, re.DOTALL
             )
             if match:
                 docid = match.group(1).strip()
 
         if "<|d" in docid:
-            semantic_tokens = re.findall(r"<\|d\d+_\d+\|>", docid)
-            if semantic_tokens:
-                return " ".join(semantic_tokens)
-            else:
-                return docid.strip()
-        else:
-            return docid.replace("<|", "").replace("|>", "").strip()
+            tokens = re.findall(r"<\|d\d+_\d+\|>", docid)
+            return " ".join(tokens) if tokens else docid.strip()
+
+        return docid.replace("<|", "").replace("|>", "").strip()
 
     def evaluate_on_test_set(
         self, test_file: str, max_samples: Optional[int] = None
     ) -> Dict[str, Any]:
-        """
-        Evaluate the model on a test set and compute accuracy.
-
-        Args:
-            test_file: Path to test JSON file
-            max_samples: Maximum number of samples to evaluate (None for all)
-
-        Returns:
-            Dictionary with evaluation results
-        """
         logger.info(f"Loading test data from: {test_file}")
-
-        with open(test_file, "r") as f:
+        with open(test_file) as f:
             test_data = [json.loads(line) for line in f]
 
         if max_samples:
@@ -232,12 +149,9 @@ class DecoderInference:
 
         logger.info(f"Evaluating on {len(test_data)} samples...")
 
-        hit_at_1: float = 0.0
-        hit_at_10: float = 0.0
-        recall_at_10: float = 0.0
-        mrr_at_10: float = 0.0
-        total: int = len(test_data)
-        predictions: list = []
+        hit_at_1 = hit_at_10 = recall_at_10 = mrr_at_10 = 0.0
+        total = len(test_data)
+        predictions = []
 
         with tqdm(total=total, desc="Evaluating", unit="sample") as pbar:
             for idx, item in enumerate(test_data):
@@ -249,22 +163,14 @@ class DecoderInference:
                     true_docid = item["conversations"][1]["content"]
 
                 predicted_docids = self.generate_docid("question: " + text)
-                logger.info(
-                    f"Predicted_docids: {predicted_docids}, True_docid: {true_docid}"
-                )
+                # logger.info(f"Predicted: {predicted_docids}  True: {true_docid}")
 
-                true_docid_normalized = str(true_docid).strip()
-
-                if isinstance(predicted_docids, list):
-                    predicted_docids_normalized = [
-                        str(p).strip() for p in predicted_docids
-                    ]
-                else:
-                    predicted_docids_normalized = [str(predicted_docids).strip()]
+                true_norm = str(true_docid).strip()
+                pred_norm = [str(p).strip() for p in predicted_docids]
 
                 rank = (
-                    predicted_docids_normalized.index(true_docid_normalized) + 1
-                    if true_docid_normalized in predicted_docids_normalized
+                    pred_norm.index(true_norm) + 1
+                    if true_norm in pred_norm
                     else float("inf")
                 )
                 hit_at_1 += 1.0 if rank <= 1 else 0.0
@@ -272,17 +178,11 @@ class DecoderInference:
                 recall_at_10 += 1.0 if rank <= 10 else 0.0
                 mrr_at_10 += 1.0 / rank if rank <= 10 else 0.0
 
-                current_hit_1 = hit_at_1 / (idx + 1)
-                current_hit_10 = hit_at_10 / (idx + 1)
-                current_recall_at_10 = recall_at_10 / (idx + 1)
-                current_mrr_at_10 = mrr_at_10 / (idx + 1)
-
                 pbar.set_postfix(
                     {
-                        "Hit@1": f"{current_hit_1:.4f}",
-                        "Hit@10": f"{current_hit_10:.4f}",
-                        "Recall@10": f"{current_recall_at_10:.4f}",
-                        "MRR@10": f"{current_mrr_at_10:.4f}",
+                        "Hit@1": f"{hit_at_1 / (idx + 1):.4f}",
+                        "Hit@10": f"{hit_at_10 / (idx + 1):.4f}",
+                        "MRR@10": f"{mrr_at_10 / (idx + 1):.4f}",
                     }
                 )
                 pbar.update(1)
@@ -294,114 +194,57 @@ class DecoderInference:
                         "predicted_docid": predicted_docids,
                         "hit_at_1": rank <= 1,
                         "hit_at_10": rank <= 10,
-                        "recall_at_10": rank <= 10,
                         "mrr_at_10": 1.0 / rank if rank <= 10 else 0.0,
                     }
                 )
 
-        hit_at_1_score = hit_at_1 / total
-        hit_at_10_score = hit_at_10 / total
-        recall_at_10_score = recall_at_10 / total
-        mrr_at_10_score = mrr_at_10 / total
-
         results = {
-            "hit_at_1": hit_at_1_score,
-            "hit_at_10": hit_at_10_score,
-            "recall_at_10": recall_at_10_score,
-            "mrr_at_10": mrr_at_10_score,
+            "hit_at_1": hit_at_1 / total,
+            "hit_at_10": hit_at_10 / total,
+            "recall_at_10": recall_at_10 / total,
+            "mrr_at_10": mrr_at_10 / total,
             "total": total,
             "predictions": predictions,
         }
-
-        logger.info(f"Hit@1: {hit_at_1_score:.4f} ({hit_at_1}/{total})")
-        logger.info(f"Hit@10: {hit_at_10_score:.4f} ({hit_at_10}/{total})")
-        logger.info(f"Recall@10: {recall_at_10_score:.4f} ({recall_at_10}/{total})")
-        logger.info(f"MRR@10: {mrr_at_10_score:.4f} ({mrr_at_10}/{total})")
-
+        logger.info(f"Hit@1:  {results['hit_at_1']:.4f} ({hit_at_1}/{total})")
+        logger.info(f"Hit@10: {results['hit_at_10']:.4f} ({hit_at_10}/{total})")
+        logger.info(f"MRR@10: {results['mrr_at_10']:.4f} ({mrr_at_10}/{total})")
         return results
 
 
-def get_args() -> Namespace:
-    parser = ArgumentParser()
-    parser.add_argument(
-        "--model_path",
-        type=str,
-        required=True,
-        help="Path to the trained model checkpoint",
-    )
-    parser.add_argument(
-        "--from_hf",
-        type=bool,
-        required=True,
-        default=False,
-    )
-    parser.add_argument(
-        "--base_model_path",
-        type=str,
-        help="Path to the base model checkpoint (for LoRA models)",
-    )
-    parser.add_argument(
-        "--train_file",
-        type=str,
-    )
-    parser.add_argument(
-        "--test_file",
-        type=str,
-        help="Path to test file for batch inference",
-    )
-    parser.add_argument(
-        "--max_samples", type=int, help="Maximum number of samples for evaluation"
-    )
-    parser.add_argument("--output_file", type=str, help="Output file to save results")
-
-    return parser.parse_args()
-
-
-def main():
-    device = "cuda"
-    args = get_args()
+@hydra.main(config_path="../configs", config_name="inference_stage1", version_base=None)
+def main(cfg: DictConfig) -> None:
     inference = DecoderInference(
-        args.model_path,
-        args.from_hf,
-        args.train_file,
-        device,
-        args.base_model_path,
+        model_path=cfg.model_path,
+        from_hf=cfg.get("from_hf", False),
+        train_data_path=cfg.train_file,
+        num_beams=cfg.get("num_beams", 10),
+        num_return=cfg.get("num_return", 10),
+        max_new_tokens=cfg.get("max_new_tokens", 50),
+        base_model_path=cfg.get("base_model_path", None),
     )
 
-    if not os.path.exists(args.output_file):
-        results = inference.evaluate_on_test_set(args.test_file, args.max_samples)
+    output_file = cfg.get("output_file", None)
 
-        if args.output_file:
-            with open(args.output_file, "w") as f:
-                json.dump(results, f, indent=2)
-
-            logger.info(f"Evaluation results saved to: {args.output_file}")
-        else:
-            logger.info(
-                f"Hit@1: {results['hit_at_1']:.4f} ({results['hit_at_1_count']}/{results['total']})"
-            )
-            logger.info(
-                f"Hit@10: {results['hit_at_10']:.4f} ({results['hit_at_10_count']}/{results['total']})"
-            )
-            logger.info(
-                f"Recall@10: {results['recall_at_10']:.4f} ({results['recall_at_10_count']}/{results['total']})"
-            )
-            logger.info(
-                f"MRR@10: {results['mrr_at_10']:.4f} ({results['mrr_at_10_count']}/{results['total']})"
-            )
-    else:
-        with open(args.output_file, "r") as f:
-            results = json.load(f)["predictions"]
-
-        model_outputs = [res["predicted_docid"] for res in results]
-        goldens = [res["true_docid"] for res in results]
-        metrics_calculator = GRMetrics(model_outputs, goldens)
-        metrics = metrics_calculator.calculate_metrics(k=[1, 10])
-
+    if output_file and Path(output_file).exists():
+        with open(output_file) as f:
+            saved = json.load(f)
+        model_outputs = [r["predicted_docid"] for r in saved["predictions"]]
+        goldens = [r["true_docid"] for r in saved["predictions"]]
+        metrics = GRMetrics(model_outputs, goldens).calculate_metrics(k=[1, 10])
         print(metrics)
+        return
 
-    return 0
+    results = inference.evaluate_on_test_set(
+        cfg.test_file, cfg.get("max_samples", None)
+    )
+
+    if output_file:
+        Path(output_file).parent.mkdir(parents=True, exist_ok=True)
+        with open(output_file, "w") as f:
+            json.dump(results, f, indent=2)
+        logger.info(f"Results saved to: {output_file}")
 
 
 if __name__ == "__main__":
-    exit(main())
+    main()

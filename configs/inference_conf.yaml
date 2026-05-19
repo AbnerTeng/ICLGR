@@ -1,17 +1,14 @@
-model_path: "~/git/ICLGR/checkpoint/Qwen3-1.7B-icl-3shot-position-template-v4-5e-5-5epochs"
+model_path: "~/git/ICLGR/./checkpoint/Qwen3-1.7B-icl-3shot-position-template-v4-5e-5-10epochs"
 from_hf: false
 base_model_path:
 train_file: "~/git/ICLGR/data/msmarco/train.jsonl"
 new_file: "~/git/ICLGR/data/msmarco/icl_test.jsonl"
 test_file: "~/git/ICLGR/data/msmarco-icl-3shot-v4/test.jsonl"
-max_samples: -1
+max_samples: 1000
 batch_size: 8
-# Constrained decoding mode: base | copy | dual_tag
-# base:     TrieConstrainedLogitsProcessor         (no tag, plain trie)
-# copy:     TrieConstrainedLogitsProcessorWithTag  ([COPY] -> context trie, else main trie)
-# dual_tag: TrieConstrainedLogitsProcessorWithDualTag ([COPY] -> context, [RETRIEVE] -> main)
+
 processor_type: "copy"
 # HuggingFace corpus repo to build the global docid trie from (uses doc_id field, indexing split)
 # Leave empty to fall back to local train_file/new_file
 hf_corpus: "Lala8383/msmarco-item-id-lower"
-output_file: "~/git/ICLGR/retrieve_results/v4-5e-5-5epochs-copy-test.json"
+output_file: "~/git/ICLGR/retrieve_results/v4-5e-5-10epochs-test.json"

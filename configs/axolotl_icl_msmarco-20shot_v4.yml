@@ -1,7 +1,7 @@
-base_model: ./checkpoint/Qwen3-1.7B-icl-3shot-position-template-v4-5e-5-5epochs
+base_model: Abner0803/Qwen3-1.7B-msmarco-text-100k-with_pseudo_queries
 
 datasets:
-  - path: ./data/msmarco-icl-3shot-v4-retrieve-allnoise/train.jsonl
+  - path: ./data/msmarco-icl-20shot-v4/train.jsonl
     type: chat_template
     chat_template: tokenizer_default_fallback_chatml
     field_messages: conversations
@@ -18,30 +18,13 @@ datasets:
         - human
       system:
         - system
-  # - path: ./data/msmarco_text_axolotl/train_with_pseudo_axolotl.jsonl
-  #   type: chat_template
-  #   chat_template: tokenizer_default_fallback_chatml
-  #   field_messages: conversations
-  #   message_property_mappings:
-  #     role: role
-  #     content: content
-  #   roles:
-  #     assistant:
-  #       - assistant
-  #       - gpt
-  #       - model
-  #     user:
-  #       - user
-  #       - human
-  #     system:
-  #       - system
-  #
+
 roles_to_train: ["assistant"]
 train_on_eos: "turn"
 
 shuffle_merged_datasets: true
-output_dir: ./checkpoint/Qwen3-1.7B-icl-3shot-position-template-v4-curriculum-allnoise-1e-5-3epochs
-sequence_len: 2048
+output_dir: ./checkpoint/Qwen3-1.7B-icl-20shot-v4-5e-5-5epochs-no-s1
+sequence_len: 3000
 sample_packing: true
 pad_to_sequence_len: true
 flash_attention: false
@@ -49,14 +32,14 @@ xformers_attention: false
 flex_attention: false
 sdp_attention: true
 
-gradient_accumulation_steps: 16
-micro_batch_size: 8
+gradient_accumulation_steps: 32
+micro_batch_size: 4
 dataloader_num_workers: 6
-num_epochs: 3
+num_epochs: 5
 
 optimizer: adamw_torch
 lr_scheduler: cosine
-learning_rate: 1e-5
+learning_rate: 5e-5
 warmup_ratio: 0.1
 weight_decay: 0.0
 bf16: true
@@ -69,12 +52,12 @@ save_total_limit: 3
 
 special_tokens:
   additional_special_tokens:
-    - "[RETRIEVE]"
+    - "[COPY]"
   eos_token: <|im_end|>
 
 wandb_project: "ICLGR-MSMARCO-S2"
 wandb_entity: "abnerden0803-national-taiwan-university"
-wandb_name: "qwen-1.7b-icl-3shot-position-template-v4-curriculum-allnoise-1e-5-3epochs"
+wandb_name: "qwen-1.7b-icl-20shot-v4-5e-5-5epochs-no-s1"
 wandb_log_model:
 wandb_watch:
 

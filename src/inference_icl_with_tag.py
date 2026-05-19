@@ -252,6 +252,7 @@ class DecoderInferenceWithTag:
             **encoding,
             generation_config=self.generation_config,
             logits_processor=logits_processor,
+            use_cache=True,
         )
 
         num_ret = self.generation_config.num_return_sequences

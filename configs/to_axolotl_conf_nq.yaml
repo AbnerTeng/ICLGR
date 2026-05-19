@@ -1,0 +1,5 @@
+dataset_name: "nq_text_title"
+input_dir: "data/nq_text_title"
+output_dir: "data/nq_text_title_axolotl"
+splits:
+  - train_with_pseudo

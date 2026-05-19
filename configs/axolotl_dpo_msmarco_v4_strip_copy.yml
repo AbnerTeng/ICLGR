@@ -1,0 +1,52 @@
+base_model: ./checkpoint/Qwen3-1.7B-icl-3shot-position-template-v4-5e-5-5epochs
+
+rl: dpo
+rl_beta: 0.1
+
+datasets:
+  - path: ./data/dpo-v4-copy-full/dpo.jsonl
+    ds_type: json
+    split: train
+    type: chatml.default
+  - path: ./data/dpo-v4-copy-full/dpo_h1success_cd_strip_copy.jsonl
+    ds_type: json
+    split: train
+    type: chatml.default
+
+output_dir: ./checkpoint/Qwen3-1.7B-icl-3shot-v4-dpo-strip-copy
+sequence_len: 2048
+sample_packing: false
+pad_to_sequence_len: true
+flash_attention: false
+xformers_attention: false
+flex_attention: false
+sdp_attention: true
+
+gradient_accumulation_steps: 32
+micro_batch_size: 2
+dataloader_num_workers: 6
+num_epochs: 3
+
+optimizer: adamw_torch
+lr_scheduler: cosine
+learning_rate: 5e-6
+warmup_ratio: 0.1
+weight_decay: 0.0
+bf16: true
+tf32: false
+gradient_checkpointing: true
+
+logging_steps: 50
+save_strategy: epoch
+save_total_limit: 3
+
+special_tokens:
+  eos_token: <|im_end|>
+
+wandb_project: "ICLGR-MSMARCO-S2"
+wandb_entity: "abnerden0803-national-taiwan-university"
+wandb_name: "qwen-1.7b-icl-3shot-v4-dpo-strip-copy"
+wandb_log_model:
+wandb_watch:
+
+val_set_size: 0.0
