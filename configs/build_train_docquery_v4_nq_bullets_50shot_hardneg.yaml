@@ -1,0 +1,7 @@
+input_path: "./data/nq-item-id-llm-bullets-hardneg"
+output_dir: "./data/nq-item-id-llm-bullets-hardneg-50shot-v4"
+n_shot: 50
+n_examples: 3
+seed: 42
+splits: ["train"]
+retrieval_hard_neg: true

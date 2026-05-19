@@ -1,19 +1,4 @@
 """
-Build few-shot test/icl_test data with v4 template (multi-example block + n docs).
-
-Differences from src/to_axolotl_docquery_position_template_v4.py:
-  - Generates evaluation data only (test, icl_test), no train/stage1/hard-neg.
-  - Example block supports MULTIPLE demonstrations (Example 1: ... Example N:),
-    matching the existing test_3shot.jsonl format.
-  - Each query produces two examples: context_dependent (target at random
-    position 0..n_shot-1) and all_noise (target NOT in context).
-
-Sourcing rule:
-  test     — queries from test.jsonl;     docs sampled from train.jsonl indexing;
-             demo examples sampled from test queries (leave-one-out).
-  icl_test — queries from icl_test.jsonl; docs sampled from icl_test indexing;
-             demo examples sampled from icl_test queries (leave-one-out).
-
 Run:
   python -m src.build_test_docquery_v4 n_shot=100 n_examples=3
 """
@@ -185,9 +170,7 @@ def generate_all_noise(
         "conversations": [
             {
                 "role": "user",
-                "content": _build_ctx_prompt(
-                    neg_docs, target_query["text"], examples
-                ),
+                "content": _build_ctx_prompt(neg_docs, target_query["text"], examples),
             },
             {"role": "assistant", "content": _build_answer(true_item, copy=False)},
         ],
@@ -217,7 +200,9 @@ def process_and_save(
     doc_id_to_doc = {d["doc_id"]: d for d in docs_pool}
     if retrieval_hard_neg:
         n_with_hn = sum(1 for d in docs_pool if d.get("hard_negatives"))
-        print(f"retrieval_hard_neg=True ({n_with_hn}/{len(docs_pool)} docs have hard_negatives)")
+        print(
+            f"retrieval_hard_neg=True ({n_with_hn}/{len(docs_pool)} docs have hard_negatives)"
+        )
 
     n_saved = 0
     n_skipped_cd = n_skipped_an = 0
@@ -279,7 +264,9 @@ def main(cfg: DictConfig):
         _, test_queries = _load_split(f"{cfg.input_path}/test.jsonl")
 
     if "icl_test" in splits:
-        icl_test_docs, icl_test_queries = _load_split(f"{cfg.input_path}/icl_test.jsonl")
+        icl_test_docs, icl_test_queries = _load_split(
+            f"{cfg.input_path}/icl_test.jsonl"
+        )
 
     if debug_max_queries:
         if train_queries is not None:

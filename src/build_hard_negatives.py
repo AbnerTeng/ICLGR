@@ -41,7 +41,7 @@ def main():
     ap.add_argument("--src_dir", default="data/msmarco-item-id")
     ap.add_argument("--dst_dir", default="data/msmarco-item-id-hardneg")
     ap.add_argument("--model", default="BAAI/bge-base-en-v1.5")
-    ap.add_argument("--k", type=int, default=3, help="Number of hard negatives per row")
+    ap.add_argument("--k", type=int, default=100, help="Number of hard negatives per row")
     ap.add_argument(
         "--pool_depth",
         type=int,

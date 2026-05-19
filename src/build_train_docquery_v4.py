@@ -1,10 +1,4 @@
 """
-Build few-shot train data with the v4 doc-query template.
-
-This is the train-only companion to src/build_test_docquery_v4.py.  It is
-designed for large train.jsonl files, so it only reads the train split instead
-of loading test/icl_test as well.
-
 Run:
   python -m src.build_train_docquery_v4
   python -m src.build_train_docquery_v4 n_shot=100 n_examples=3 retrieval_hard_neg=true
@@ -44,7 +38,9 @@ def _iter_jsonl(path: str) -> Iterable[Dict]:
 def _load_train_split(train_path: str) -> Tuple[List[Dict], List[Dict]]:
     docs: List[Dict] = []
     queries: List[Dict] = []
-    for row in tqdm(_iter_jsonl(train_path), desc=f"read {os.path.basename(train_path)}"):
+    for row in tqdm(
+        _iter_jsonl(train_path), desc=f"read {os.path.basename(train_path)}"
+    ):
         row = _alias_item(row)
         operation = row.get("operation")
         if operation == "indexing":
@@ -82,7 +78,9 @@ def _build_ctx_prompt(
     )
 
 
-def _sample_examples(example_pool: List[Dict], target_query: Dict, k: int) -> List[Dict]:
+def _sample_examples(
+    example_pool: List[Dict], target_query: Dict, k: int
+) -> List[Dict]:
     if not example_pool or k <= 0:
         return []
 
@@ -111,8 +109,13 @@ def _sample_examples(example_pool: List[Dict], target_query: Dict, k: int) -> Li
     return examples
 
 
+HARD_NEG_SKIP_TOP = 3
+HARD_NEG_WINDOW_EXTRA = 20
+
+
 def _pick_neg_docs(
     n_needed: int,
+    n_shot: int,
     true_doc_id: str,
     true_item: str,
     pos_doc: Optional[Dict],
@@ -128,13 +131,14 @@ def _pick_neg_docs(
     if retrieval_hard_neg:
         hard_negatives = (pos_doc or {}).get("hard_negatives") or []
         eligible_neg = [d for d in hard_negatives if is_negative(d)]
-    else:
-        eligible_neg = [d for d in eligible_docs if is_negative(d)]
+        candidates = eligible_neg[HARD_NEG_SKIP_TOP : HARD_NEG_WINDOW_EXTRA + n_shot]
+        if len(candidates) < n_needed:
+            return None
+        return random.sample(candidates, n_needed)
 
+    eligible_neg = [d for d in eligible_docs if is_negative(d)]
     if len(eligible_neg) < n_needed:
         return None
-    if retrieval_hard_neg:
-        return eligible_neg[:n_needed]
     return random.sample(eligible_neg, n_needed)
 
 
@@ -154,6 +158,7 @@ def generate_context_dependent(
 
     neg_docs = _pick_neg_docs(
         n_needed=n_shot - 1,
+        n_shot=n_shot,
         true_doc_id=true_doc_id,
         true_item=true_item,
         pos_doc=pos_doc,
@@ -171,7 +176,9 @@ def generate_context_dependent(
         "conversations": [
             {
                 "role": "user",
-                "content": _build_ctx_prompt(context_docs, target_query["text"], examples),
+                "content": _build_ctx_prompt(
+                    context_docs, target_query["text"], examples
+                ),
             },
             {"role": "assistant", "content": _build_answer(true_item, copy=True)},
         ],
@@ -197,6 +204,7 @@ def generate_all_noise(
 
     neg_docs = _pick_neg_docs(
         n_needed=n_shot,
+        n_shot=n_shot,
         true_doc_id=true_doc_id,
         true_item=true_item,
         pos_doc=pos_doc,
