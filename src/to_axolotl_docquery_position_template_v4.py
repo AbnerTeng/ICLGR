@@ -1,9 +1,9 @@
 """
-Stage 2: three pattern types
-    → trains ICL ability
+Stage 2: two pattern types
+    -> trains ICL ability
 
 -----------------
-Type 1 — Context-dependent  (doc_pos_front / doc_pos_back)
+Type 1 - Context-dependent  (context_dependent)
     The relevant document appears in the context; model must copy its identifier.
 
     context: [doc_A→title_A, doc_B→title_B, doc_C→title_C]
@@ -13,7 +13,7 @@ Type 1 — Context-dependent  (doc_pos_front / doc_pos_back)
     Mix: ~70-80% pseudo queries, ~20-30% real queries.
     Target size: ~30-40k (augmented by pairing the same query with different context orderings).
 
-Type 2 — Context-independent  (all_noise)
+Type 2 - Context-independent  (all_noise)
     All context documents are unrelated to the query; model must fall back to
     parametric memory and ignore the context.
 
@@ -24,24 +24,14 @@ Type 2 — Context-independent  (all_noise)
     Mix: primarily real queries.
     Target size: ~30-40k.
 
-Type 3 — Empty context  (stage1_retrieval / stage1_indexing)
-    Direct replay of Stage 1 examples with no context window.
-
-    context: (empty)
-    query:   <query>
-    output:  <title>
-
-    Mix: both pseudo and real queries.
-    Target size: ~15-20k (sampled from Stage 1 data).
-
-Total: ~75-100k examples across all three types.
+Total: only context_dependent and all_noise examples are emitted.
 """
 
 import json
 import random
 import os
 from multiprocessing import Pool, cpu_count
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import numpy as np
 from tqdm import tqdm
@@ -52,20 +42,26 @@ from omegaconf import DictConfig
 
 # ── Template builder ──────────────────────────────────────────────────────
 
-def _build_ctx_prompt(context_docs: List[Dict], query_text: str, example: Optional[Dict] = None) -> str:
-    doc_blocks = []
-    for i, doc in enumerate(context_docs):
-        doc_blocks.append(
-            f"Document {i + 1}\n"
-            f"Text: {doc['text']}\n"
-            f"Identifier: {doc['item']}"
-        )
+def _build_ctx_prompt(
+    context_docs: List[Dict],
+    query_text: str,
+    examples: Optional[List[Dict]] = None,
+) -> str:
+    doc_blocks = [
+        f"Document {i + 1}\nText: {doc['text']}\nIdentifier: {doc['item']}"
+        for i, doc in enumerate(context_docs)
+    ]
     example_block = ""
-    if example:
-        example_block = f"Example:\nQuery: {example['text']}\nAnswer: {example['item']}\n\n"
+    if examples:
+        ex_lines = [
+            f"Example {i + 1}:\nQuery: {ex['text']}\nAnswer: {ex['item']}"
+            for i, ex in enumerate(examples)
+        ]
+        example_block = "\n\n".join(ex_lines) + "\n\n"
     return (
         "## Documents\n"
-        + "\n\n".join(doc_blocks) + "\n\n\n"
+        + "\n\n".join(doc_blocks)
+        + "\n\n\n"
         + "## Task\n"
         + example_block
         + f"Query: {query_text}\n"
@@ -80,42 +76,6 @@ def _build_answer(item: str, copy: bool = False) -> str:
 
 
 # ── Pattern generators ────────────────────────────────────────────────────
-
-def generate_zero_shot(target_query: Dict, example: Optional[Dict] = None) -> Dict:
-    true_item = target_query["item"]
-    example_block = ""
-    if example:
-        example_block = f"Example:\nQuery: {example['text']}\nAnswer: {example['item']}\n\n"
-    user_content = (
-        "## Task\n"
-        + example_block
-        + f"Query: {target_query['text']}\n"
-        + "Answer:"
-    )
-    return {
-        "conversations": [
-            {"role": "user", "content": user_content},
-            {"role": "assistant", "content": _build_answer(true_item, copy=False)},
-        ],
-        "metadata": {"pattern": "stage1_retrieval", "target_id": true_item},
-    }
-
-
-def generate_zero_shot_indexing(target_doc: Dict) -> Dict:
-    true_item = target_doc["item"]
-    user_content = (
-        "## Task\n"
-        f"Document: {target_doc['text']}\n"
-        "Answer:"
-    )
-    return {
-        "conversations": [
-            {"role": "user", "content": user_content},
-            {"role": "assistant", "content": _build_answer(true_item, copy=False)},
-        ],
-        "metadata": {"pattern": "stage1_indexing", "target_id": true_item},
-    }
-
 
 def _pick_neg_docs(
     n_needed: int,
@@ -137,13 +97,13 @@ def _pick_neg_docs(
     return random.sample(eligible_neg, n_needed)
 
 
-def generate_doc_pos_front(
+def generate_context_dependent(
     target_query: Dict,
     n_docs: int = 3,
     doc_id_to_doc: Optional[Dict] = None,
     eligible_docs: Optional[List] = None,
-    use_retrieval_hn: bool = False,
-    example: Optional[Dict] = None,
+    use_retrieval_hn: bool = True,
+    examples: Optional[List[Dict]] = None,
 ) -> Optional[Dict]:
     true_doc_id = target_query["doc_id"]
     true_item = target_query["item"]
@@ -154,44 +114,21 @@ def generate_doc_pos_front(
     neg_docs = _pick_neg_docs(n_docs - 1, true_doc_id, pos_doc, eligible_docs, use_retrieval_hn)
     if neg_docs is None:
         return None
-    context_docs = [pos_doc] + neg_docs  # target FIRST
+    target_position = random.randint(0, n_docs - 1)
+    context_docs = list(neg_docs)
+    context_docs.insert(target_position, pos_doc)
 
-    user_content = _build_ctx_prompt(context_docs, target_query["text"], example=example)
+    user_content = _build_ctx_prompt(context_docs, target_query["text"], examples=examples)
     return {
         "conversations": [
             {"role": "user", "content": user_content},
             {"role": "assistant", "content": _build_answer(true_item, copy=True)},
         ],
-        "metadata": {"pattern": "doc_pos_front", "target_id": true_item},
-    }
-
-
-def generate_doc_pos_back(
-    target_query: Dict,
-    n_docs: int = 3,
-    doc_id_to_doc: Optional[Dict] = None,
-    eligible_docs: Optional[List] = None,
-    use_retrieval_hn: bool = False,
-    example: Optional[Dict] = None,
-) -> Optional[Dict]:
-    true_doc_id = target_query["doc_id"]
-    true_item = target_query["item"]
-    pos_doc = doc_id_to_doc.get(true_doc_id) if doc_id_to_doc else None
-    if not pos_doc:
-        return None
-
-    neg_docs = _pick_neg_docs(n_docs - 1, true_doc_id, pos_doc, eligible_docs, use_retrieval_hn)
-    if neg_docs is None:
-        return None
-    context_docs = neg_docs + [pos_doc]  # target LAST
-
-    user_content = _build_ctx_prompt(context_docs, target_query["text"], example=example)
-    return {
-        "conversations": [
-            {"role": "user", "content": user_content},
-            {"role": "assistant", "content": _build_answer(true_item, copy=True)},
-        ],
-        "metadata": {"pattern": "doc_pos_back", "target_id": true_item},
+        "metadata": {
+            "pattern": "context_dependent",
+            "target_id": true_item,
+            "target_position": target_position,
+        },
     }
 
 
@@ -200,8 +137,8 @@ def generate_all_noise(
     n_docs: int = 3,
     eligible_docs: Optional[List] = None,
     doc_id_to_doc: Optional[Dict] = None,
-    use_retrieval_hn: bool = False,
-    example: Optional[Dict] = None,
+    use_retrieval_hn: bool = True,
+    examples: Optional[List[Dict]] = None,
 ) -> Optional[Dict]:
     true_doc_id = target_query["doc_id"]
     pos_doc = doc_id_to_doc.get(true_doc_id) if doc_id_to_doc else None
@@ -213,7 +150,7 @@ def generate_all_noise(
 
     true_item = target_query["item"]
 
-    user_content = _build_ctx_prompt(neg_docs, target_query["text"], example=example)
+    user_content = _build_ctx_prompt(neg_docs, target_query["text"], examples=examples)
     return {
         "conversations": [
             {"role": "user", "content": user_content},
@@ -267,7 +204,7 @@ def generate_all_noise_hard(
     n_docs: int,
     docs: List[Dict],
     hard_neg_indices: List[int],
-    example: Optional[Dict] = None,
+    examples: Optional[List[Dict]] = None,
 ) -> Optional[Dict]:
     """Generate all_noise using pre-computed BM25 hard negatives."""
     if len(hard_neg_indices) < n_docs:
@@ -277,7 +214,7 @@ def generate_all_noise_hard(
     neg_docs = [docs[i] for i in selected_indices]
 
     true_item = target_query["item"]
-    user_content = _build_ctx_prompt(neg_docs, target_query["text"], example=example)
+    user_content = _build_ctx_prompt(neg_docs, target_query["text"], examples=examples)
     return {
         "conversations": [
             {"role": "user", "content": user_content},
@@ -293,25 +230,28 @@ def generate_all_noise_hard(
 # ── Multiprocessing worker ────────────────────────────────────────────────
 
 def _process_query(args):
-    q, n_shot, doc_id_to_doc, eligible_docs, use_retrieval_hn, example = args
-    front = generate_doc_pos_front(
+    q, n_shot, doc_id_to_doc, eligible_docs, use_retrieval_hn, examples = args
+    context_dependent = generate_context_dependent(
         q, n_docs=n_shot, doc_id_to_doc=doc_id_to_doc,
-        eligible_docs=eligible_docs, use_retrieval_hn=use_retrieval_hn, example=example,
-    )
-    back = generate_doc_pos_back(
-        q, n_docs=n_shot, doc_id_to_doc=doc_id_to_doc,
-        eligible_docs=eligible_docs, use_retrieval_hn=use_retrieval_hn, example=example,
+        eligible_docs=eligible_docs, use_retrieval_hn=use_retrieval_hn, examples=examples,
     )
     noise = generate_all_noise(
         q, n_docs=n_shot, eligible_docs=eligible_docs,
-        doc_id_to_doc=doc_id_to_doc, use_retrieval_hn=use_retrieval_hn, example=example,
+        doc_id_to_doc=doc_id_to_doc, use_retrieval_hn=use_retrieval_hn, examples=examples,
     )
-    return front, back, noise
+    return context_dependent, noise
 
 
 def _process_noise_only(args):
-    q, n_shot, eligible_docs, example = args
-    return generate_all_noise(q, n_docs=n_shot, eligible_docs=eligible_docs, example=example)
+    q, n_shot, eligible_docs, doc_id_to_doc, use_retrieval_hn, examples = args
+    return generate_all_noise(
+        q,
+        n_docs=n_shot,
+        eligible_docs=eligible_docs,
+        doc_id_to_doc=doc_id_to_doc,
+        use_retrieval_hn=use_retrieval_hn,
+        examples=examples,
+    )
 
 
 # ── Pipeline ──────────────────────────────────────────────────────────────
@@ -320,6 +260,37 @@ def subsample(examples: List, target_n: int) -> List:
     if len(examples) <= target_n:
         return examples
     return random.sample(examples, target_n)
+
+
+def _sample_examples(example_pool: List[Dict], target_query: Dict, k: int) -> List[Dict]:
+    if not example_pool:
+        return []
+
+    examples: List[Dict] = []
+    seen_doc_ids = {target_query["doc_id"]}
+    max_attempts = max(k * 10, 20)
+    for _ in range(max_attempts):
+        if len(examples) >= k:
+            break
+        candidate = random.choice(example_pool)
+        doc_id = candidate["doc_id"]
+        if doc_id in seen_doc_ids:
+            continue
+        examples.append(candidate)
+        seen_doc_ids.add(doc_id)
+
+    if len(examples) >= k:
+        return examples
+
+    for candidate in example_pool:
+        if len(examples) >= k:
+            break
+        doc_id = candidate["doc_id"]
+        if doc_id in seen_doc_ids:
+            continue
+        examples.append(candidate)
+        seen_doc_ids.add(doc_id)
+    return examples
 
 
 def process_and_save(
@@ -335,7 +306,7 @@ def process_and_save(
     zs_noise: bool = False,
     hard_negative: bool = False,
     hard_negative_k: int = 20,
-    retrieval_hard_neg: bool = False,
+    retrieval_hard_neg: bool = True,
 ):
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
@@ -352,8 +323,14 @@ def process_and_save(
 
     example_pool = queries
     args_list = [
-        (q, n_shot, doc_id_to_doc, eligible_docs, retrieval_hard_neg,
-         random.choice([x for x in example_pool if x["doc_id"] != q["doc_id"]]))
+        (
+            q,
+            n_shot,
+            doc_id_to_doc,
+            eligible_docs,
+            retrieval_hard_neg,
+            _sample_examples(example_pool, q, n_shot),
+        )
         for q in queries
     ]
 
@@ -366,15 +343,12 @@ def process_and_save(
         ))
 
     buckets: Dict[str, List] = {
-        "doc_pos_front": [],
-        "doc_pos_back": [],
+        "context_dependent": [],
         "all_noise": [],
     }
-    for front, back, noise in results:
-        if front:
-            buckets["doc_pos_front"].append(front)
-        if back:
-            buckets["doc_pos_back"].append(back)
+    for context_dependent, noise in results:
+        if context_dependent:
+            buckets["context_dependent"].append(context_dependent)
         if noise:
             buckets["all_noise"].append(noise)
 
@@ -383,8 +357,14 @@ def process_and_save(
         print(f"  Generating all_noise from stage1 queries ({len(zs_queries)} queries), noise docs from train ({len(eligible_docs)} docs)...")
         buckets["all_noise"] = []
         zs_noise_args = [
-            (q, n_shot, eligible_docs,
-             random.choice([x for x in example_pool if x["doc_id"] != q["doc_id"]]))
+            (
+                q,
+                n_shot,
+                eligible_docs,
+                doc_id_to_doc,
+                retrieval_hard_neg,
+                _sample_examples(example_pool, q, n_shot),
+            )
             for q in zs_queries
         ]
         with Pool(processes=n_workers) as pool:
@@ -406,57 +386,28 @@ def process_and_save(
         for q in tqdm(hn_queries, desc="Hard negative all_noise"):
             key = q["doc_id"] + "||" + q["text"]
             neg_indices = hard_neg_map.get(key, [])
-            eg = random.choice([x for x in example_pool if x["doc_id"] != q["doc_id"]])
-            ex = generate_all_noise_hard(q, n_shot, hn_docs, neg_indices, example=eg)
+            examples = _sample_examples(example_pool, q, n_shot)
+            ex = generate_all_noise_hard(q, n_shot, hn_docs, neg_indices, examples=examples)
             if ex:
                 buckets["all_noise"].append(ex)
         print(f"  hard negative all_noise: {len(buckets['all_noise'])} examples")
 
-    _zs_queries = zs_queries if zs_queries is not None else list(train_queries)
-    _zs_docs = zs_docs if zs_docs is not None else train_docs
-
-    stage1_retrieval = [
-        generate_zero_shot(
-            q,
-            example=random.choice([x for x in example_pool if x["doc_id"] != q["doc_id"]]),
-        )
-        for q in _zs_queries
-    ]
-    stage1_indexing = [generate_zero_shot_indexing(d) for d in _zs_docs]
-
-    n_queries = len(queries)
-
-    # Handle stage1: ratio is a fraction of the original stage1 data (preserves retrieval:indexing ratio)
-    stage1_ratio = type_ratios.pop("stage1", None)
-    if stage1_ratio is not None:
-        ret_target = max(1, int(len(stage1_retrieval) * stage1_ratio))
-        idx_target = max(1, int(len(stage1_indexing) * stage1_ratio))
-        buckets["stage1_retrieval"] = subsample(stage1_retrieval, ret_target)
-        buckets["stage1_indexing"] = subsample(stage1_indexing, idx_target)
-    else:
-        buckets["stage1_retrieval"] = stage1_retrieval
-        buckets["stage1_indexing"] = stage1_indexing
-
-    print(f"  queries={n_queries}  raw: " +
+    print(f"  queries={len(queries)}  raw: " +
           "  ".join(f"{k}={len(v)}" for k, v in buckets.items()))
 
-    subsampled: Dict[str, List] = {}
-    for name, examples in buckets.items():
-        if name not in type_ratios:
-            subsampled[name] = examples
-            continue
-        ratio = type_ratios[name]
-        target_n = max(1, int(n_queries * ratio)) if examples else 0
-        subsampled[name] = subsample(examples, target_n)
+    # Keep one context_dependent and one all_noise example for every query that
+    # has enough context docs. The v4 train format no longer ratio-subsamples
+    # pattern buckets.
+    all_by_pattern: Dict[str, List] = buckets
 
     if oversample:
         for name, factor in oversample.items():
-            if name in subsampled and factor > 1:
-                original = subsampled[name]
-                subsampled[name] = original * factor
-                print(f"  oversample {name}: {len(original)} x {factor} = {len(subsampled[name])}")
+            if name in all_by_pattern and factor > 1:
+                original = all_by_pattern[name]
+                all_by_pattern[name] = original * factor
+                print(f"  oversample {name}: {len(original)} x {factor} = {len(all_by_pattern[name])}")
 
-    all_examples = [ex for exs in subsampled.values() for ex in exs]
+    all_examples = [ex for exs in all_by_pattern.values() for ex in exs]
     random.shuffle(all_examples)
 
     with open(output_path, "w", encoding="utf-8") as f:
@@ -464,7 +415,7 @@ def process_and_save(
             f.write(json.dumps(ex, ensure_ascii=False) + "\n")
 
     print(f"Saved {len(all_examples)} examples.")
-    for name, exs in subsampled.items():
+    for name, exs in all_by_pattern.items():
         print(f"  - {name:<22} {len(exs)}")
 
 
@@ -498,8 +449,8 @@ def main(cfg: DictConfig):
     if cfg.get("zs_input_path"):
         print(f"Loading zero-shot data from: {cfg.zs_input_path}")
         zs_ds = load_dataset("json", data_files={"train": cfg.zs_input_path})["train"]
-        zs_docs = [s for s in zs_ds if s["operation"] == "indexing"]
-        zs_queries = [s for s in zs_ds if s["operation"] == "query"]
+        zs_docs = [_alias_item(dict(s)) for s in zs_ds if s["operation"] == "indexing"]
+        zs_queries = [_alias_item(dict(s)) for s in zs_ds if s["operation"] == "query"]
         print(f"  zero-shot pool: {len(zs_docs)} docs, {len(zs_queries)} queries")
 
     debug_max_queries = cfg.get("debug_max_queries")
@@ -536,7 +487,7 @@ def main(cfg: DictConfig):
         use_zs_noise = cfg.get("zs_noise", False) and split == "train"
         use_hard_neg = cfg.get("hard_negative", False) and split == "train"
         hard_neg_k = cfg.get("hard_negative_k", 20)
-        use_retrieval_hn = cfg.get("retrieval_hard_neg", False) and split == "train"
+        use_retrieval_hn = cfg.get("retrieval_hard_neg", True) and split == "train"
         if use_hard_neg and use_retrieval_hn:
             raise ValueError("hard_negative (BM25) and retrieval_hard_neg cannot both be true")
 

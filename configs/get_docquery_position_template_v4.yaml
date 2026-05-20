@@ -5,7 +5,7 @@ n_shot: 3
 output_dir: "./data/msmarco-item-id-3shot_v4"
 
 type_ratios:
-  doc_pos_front: 0.25          # ~16k (Type 1: context-dependent, target first)
-  doc_pos_back:  0.25          # ~16k (Type 1: context-dependent, target last)
-  all_noise:     0.5           # ~32k (Type 2: context-independent, parametric memory)
-  stage1:        0.25          # ~25% of Stage 1 data (Type 3: empty context)
+  context_dependent: 1.0       # Every query gets one context-dependent sample
+  all_noise:     1.0           # Every query gets one all-noise sample
+
+retrieval_hard_neg: true

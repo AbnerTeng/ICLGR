@@ -1,0 +1,7 @@
+input_path: "./data/msmarco-item-id-hardneg-100"
+output_dir: "./data/msmarco-item-id-hardneg-100shot-v4"
+n_shot: 100
+n_examples: 3
+seed: 42
+splits: ["train"]
+retrieval_hard_neg: true
