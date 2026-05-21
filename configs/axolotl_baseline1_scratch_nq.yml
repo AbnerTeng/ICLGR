@@ -1,25 +1,7 @@
 base_model: Qwen/Qwen3-1.7B-Base
 datasets:
-  - path: nq_text_compressed_axolotl/train_with_pseudo_axolotl.jsonl
-    type: chat_template
-    chat_template: tokenizer_default_fallback_chatml
-    field_messages: conversations
-    message_property_mappings:
-      role: role
-      content: content
-    roles:
-      assistant:
-        - assistant
-        - gpt
-        - model
-      user:
-        - user
-        - human
-      system:
-        - system
-    roles_to_train: ["assistant"]
-    train_on_eos: "turn"
-  - path: nq_text_compressed_axolotl/icl_train_with_pseudo_axolotl.jsonl
+  - path: Abner0803/nq_text-with_pseudo_query-100k-gr
+    data_files: data/icl_test.jsonl
     type: chat_template
     chat_template: tokenizer_default_fallback_chatml
     field_messages: conversations
@@ -39,8 +21,10 @@ datasets:
     roles_to_train: ["assistant"]
     train_on_eos: "turn"
 
+dataset_processes: 6
+streaming: false
 shuffle_merged_datasets: true
-output_dir: /mnt/raid0/home/abner/git/ICLGR/checkpoints/Qwen3-1.7B-Base-nq_compressed-baseline-scratch-10epohcs
+output_dir: /home/theblackcat/ICLGR/checkpoints/Qwen3-1.7B-Base-nq-baseline-scratch
 sequence_len: 2048
 sample_packing: true
 pad_to_sequence_len: true
@@ -51,9 +35,8 @@ sdp_attention: true
 overrides_of_model_config:
   _attn_implementation: "sdpa"
 
-gradient_accumulation_steps: 32
-micro_batch_size: 4
-dataloader_num_workers: 6
+gradient_accumulation_steps: 128
+micro_batch_size: 1
 num_epochs: 10
 
 optimizer: adamw_torch
