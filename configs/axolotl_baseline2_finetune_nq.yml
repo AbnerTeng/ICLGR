@@ -24,7 +24,8 @@ streaming: false
 shuffle_merged_datasets: true
 output_dir: /mnt/raid0/home/abner/git/ICLGR/checkpoints/Qwen3-1.7B-nq-baseline-finetune-5epochs
 sequence_len: 2048
-sample_packing: false
+sample_packing: true
+pad_to_sequence_len: true
 flash_attention: false
 xformers_attention: false
 flex_attention: false
@@ -32,8 +33,9 @@ sdp_attention: true
 overrides_of_model_config:
   _attn_implementation: "sdpa"
 
-gradient_accumulation_steps: 128
-micro_batch_size: 1
+gradient_accumulation_steps: 32
+micro_batch_size: 4
+dataloader_num_workers: 6
 num_epochs: 5
 
 optimizer: adamw_torch
@@ -46,8 +48,7 @@ tf32: false
 gradient_checkpointing: true
 
 logging_steps: 50
-save_strategy: steps
-save_steps: 100
+save_strategy: epoch
 save_total_limit: 3
 
 special_tokens:
