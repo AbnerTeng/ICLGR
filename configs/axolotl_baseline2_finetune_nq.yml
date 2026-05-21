@@ -1,6 +1,6 @@
 base_model: Abner0803/Qwen3-1.7B-nq-text-100k-with_pseudo_queries
 datasets:
-  - path: /mnt/raid0/home/abner/git/ICLGR/nq_text_title_axolotl/icl_train_with_pseudo_axolotl.jsonl
+  - path: nq_text_compressed/icl_train_with_pseudo_axolotl.jsonl
     type: chat_template
     chat_template: tokenizer_default_fallback_chatml
     field_messages: conversations
