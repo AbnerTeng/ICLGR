@@ -55,11 +55,11 @@ def load_corpus(
 
         doc_id = str(row["doc_id"]).strip()
         text = str(row["text"]).strip()
-        if include_doc_id_in_text:
-            text = f"{doc_id} {text}"
+        # if include_doc_id_in_text:
+        #     text = f"{doc_id} {text}"
 
         if doc_id not in docs:
-            docs[doc_id] = Document(doc_id=doc_id, text=text, title=doc_id)
+            docs[doc_id] = Document(doc_id=doc_id, text=text, title="")
 
     if not docs:
         raise ValueError(f"No corpus documents loaded from {path}")
@@ -228,6 +228,8 @@ def run_bm25(
         ) from exc
 
     corpus_texts = [doc.text for doc in docs]
+    print(len(corpus_texts))
+
     doc_ids = [doc.doc_id for doc in docs]
     corpus_tokens = bm25s.tokenize(
         corpus_texts,
@@ -259,6 +261,11 @@ def run_bm25(
                 f"BM25 searched {len(predictions)}/{len(queries)} queries",
                 file=sys.stderr,
             )
+        for index in range(10):
+            print(queries[index].doc_id in predictions[index][:10])
+            print(predictions[index][:10], queries[index].doc_id, queries[index].text)
+        print("hi")
+        breakpoint()
     return predictions
 
 
@@ -271,6 +278,42 @@ def run_bm25_py(
         predictions.append(index.search(query.text, args.top_k))
         if args.progress_every and idx % args.progress_every == 0:
             print(f"BM25-py searched {idx}/{len(queries)} queries", file=sys.stderr)
+    return predictions
+
+
+def run_bm25_rank(
+    args: argparse.Namespace, docs: list[Document], queries: list[Query]
+) -> list[list[str]]:
+    try:
+        from rank_bm25 import BM25Okapi
+    except ImportError as exc:
+        raise SystemExit(
+            "BM25 rank baseline requires rank_bm25. Run `uv add rank_bm25`, "
+            "then rerun with --method bm25_rank."
+        ) from exc
+
+    print(f"Tokenizing {len(docs)} docs...", file=sys.stderr)
+    tokenized_docs = [tokenize(doc.text) for doc in docs]
+    doc_ids = [doc.doc_id for doc in docs]
+    print(
+        f"Building BM25Okapi index (k1={args.bm25_k1}, b={args.bm25_b})...",
+        file=sys.stderr,
+    )
+    bm25 = BM25Okapi(tokenized_docs, k1=args.bm25_k1, b=args.bm25_b)
+
+    predictions: list[list[str]] = []
+    for idx, query in enumerate(queries, start=1):
+        tokenized_q = tokenize(query.text)
+        scores = bm25.get_scores(tokenized_q)
+        top_indices = heapq.nlargest(
+            args.top_k, range(len(scores)), key=lambda i: scores[i]
+        )
+        predictions.append([doc_ids[i] for i in top_indices])
+        if args.progress_every and idx % args.progress_every == 0:
+            print(
+                f"BM25-rank searched {idx}/{len(queries)} queries",
+                file=sys.stderr,
+            )
     return predictions
 
 
@@ -330,7 +373,10 @@ def run_dpr(
                 if args.normalize_embeddings:
                     embeddings = F.normalize(embeddings, p=2, dim=1)
                 ctx_embeddings_parts.append(embeddings.cpu())
-                if args.progress_every and batch_idx * args.batch_size % args.progress_every == 0:
+                if (
+                    args.progress_every
+                    and batch_idx * args.batch_size % args.progress_every == 0
+                ):
                     print(
                         f"DPR encoded {min(batch_idx * args.batch_size, len(docs))}/{len(docs)} docs",
                         file=sys.stderr,
@@ -360,7 +406,10 @@ def run_dpr(
             scores = query_embeddings @ ctx_embeddings.T
             top_indices = torch.topk(scores, k=args.top_k, dim=1).indices.cpu().tolist()
             predictions.extend([[doc_ids[idx] for idx in row] for row in top_indices])
-            if args.progress_every and batch_idx * args.query_batch_size % args.progress_every == 0:
+            if (
+                args.progress_every
+                and batch_idx * args.query_batch_size % args.progress_every == 0
+            ):
                 print(
                     f"DPR searched {min(batch_idx * args.query_batch_size, len(queries))}/{len(queries)} queries",
                     file=sys.stderr,
@@ -388,7 +437,11 @@ def write_pyserini_corpus(path: Path, docs: list[Document]) -> None:
 def build_pyserini_dense_index(args: argparse.Namespace, docs: list[Document]) -> None:
     corpus_file = Path(args.pyserini_corpus_file)
     index_dir = Path(args.pyserini_index_dir)
-    if index_dir.exists() and any(index_dir.iterdir()) and not args.pyserini_rebuild_index:
+    if (
+        index_dir.exists()
+        and any(index_dir.iterdir())
+        and not args.pyserini_rebuild_index
+    ):
         return
 
     write_pyserini_corpus(corpus_file, docs)
@@ -475,7 +528,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--method",
-        choices=["bm25", "bm25_py", "dpr", "dpr_pyserini"],
+        choices=["bm25", "bm25_py", "bm25_rank", "dpr", "dpr_pyserini"],
         required=True,
     )
     parser.add_argument(
@@ -587,6 +640,8 @@ def main() -> int:
         predictions = run_bm25(args, docs, queries)
     elif args.method == "bm25_py":
         predictions = run_bm25_py(args, docs, queries)
+    elif args.method == "bm25_rank":
+        predictions = run_bm25_rank(args, docs, queries)
     elif args.method == "dpr_pyserini":
         predictions = run_dpr_pyserini(args, docs, queries)
     else:
